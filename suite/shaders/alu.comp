@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+// compute.heavy kind=alu: 8 independent FMA chains, 4 steps each per
+// iteration (32 FMA per iteration), `iters` iterations.
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) buffer Out { float o[]; };
+layout(push_constant) uniform PC { uint iters; float a; float b; } pc;
+void main()
+{
+   uint gid = gl_GlobalInvocationID.x;
+   float x0 = float(gid) * 1e-6;
+   float x1 = x0 + 1.0, x2 = x0 + 2.0, x3 = x0 + 3.0;
+   float x4 = x0 + 4.0, x5 = x0 + 5.0, x6 = x0 + 6.0, x7 = x0 + 7.0;
+   float a = pc.a, b = pc.b;
+   for (uint i = 0u; i < pc.iters; i++) {
+      x0 = fma(x0, a, b); x1 = fma(x1, a, b); x2 = fma(x2, a, b); x3 = fma(x3, a, b);
+      x4 = fma(x4, a, b); x5 = fma(x5, a, b); x6 = fma(x6, a, b); x7 = fma(x7, a, b);
+      x0 = fma(x0, a, b); x1 = fma(x1, a, b); x2 = fma(x2, a, b); x3 = fma(x3, a, b);
+      x4 = fma(x4, a, b); x5 = fma(x5, a, b); x6 = fma(x6, a, b); x7 = fma(x7, a, b);
+      x0 = fma(x0, a, b); x1 = fma(x1, a, b); x2 = fma(x2, a, b); x3 = fma(x3, a, b);
+      x4 = fma(x4, a, b); x5 = fma(x5, a, b); x6 = fma(x6, a, b); x7 = fma(x7, a, b);
+      x0 = fma(x0, a, b); x1 = fma(x1, a, b); x2 = fma(x2, a, b); x3 = fma(x3, a, b);
+      x4 = fma(x4, a, b); x5 = fma(x5, a, b); x6 = fma(x6, a, b); x7 = fma(x7, a, b);
+   }
+   o[gid] = ((x0 + x1) + (x2 + x3)) + ((x4 + x5) + (x6 + x7));
+}

@@ -1,0 +1,99 @@
+# gpubench ray-tracing plan (lane rt -> gpubench-rt-vk / gpubench-rt-mtl).
+# chunk        lane  test         arguments
+# Chunks are sized for about two minutes on Neo. rt.scene defaults: 1.5 s warm-up, 5 x 1 s
+# untimed windows, 3 x 1 s timed windows (per-pass GPU timestamps), then one census frame
+# (ray counts, image CRC).
+
+# The Solar Bay-style scene, preset ladder, two frames in flight.
+rt-scene-a     rt    rt.scene     --param preset=raster
+rt-scene-a     rt    rt.scene     --param preset=light --depths 1,2
+rt-scene-a     rt    rt.scene     --param preset=medium --depths 1,2,3
+rt-scene-b     rt    rt.scene     --param preset=solarbay
+rt-scene-b     rt    rt.scene     --param preset=heavy
+rt-scene-c     rt    rt.scene     --param preset=extreme
+
+# Ray-tracing pipeline variant (Vulkan; Metal reports skip).
+rt-pipe        rt    rt.scene     --param preset=medium --param trace=pipeline
+rt-pipe        rt    rt.scene     --param preset=solarbay --param trace=pipeline
+
+# What per-pass GPU timestamps cost: the same frames with frame start/end stamps only.
+rt-stamps      rt    rt.scene     --param preset=light --stamps frame --tag stamps-frame
+rt-stamps      rt    rt.scene     --param preset=medium --stamps frame --tag stamps-frame
+
+# Acceleration-structure build throughput vs size.
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param tris=1024
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param tris=4096
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param tris=16384
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param tris=65536
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param tris=262144
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param tris=1048576
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param build=fastbuild --param tris=65536
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param build=fastbuild --param tris=1048576
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param compact=1 --param tris=65536
+rt-asbuild     rt    rt.asbuild   --param kind=blas --param compact=1 --param tris=1048576
+rt-asbuild     rt    rt.asbuild   --param kind=refit --param tris=65536
+rt-asbuild     rt    rt.asbuild   --param kind=refit --param tris=1048576
+rt-asbuild     rt    rt.asbuild   --param kind=tlas --param tris=256
+rt-asbuild     rt    rt.asbuild   --param kind=tlas --param tris=4096
+rt-asbuild     rt    rt.asbuild   --param kind=tlas --param tris=65536
+
+# Rays per second against the medium scene (static), coherent vs incoherent, at depth.
+rt-rays        rt    rt.rays      --param preset=medium --param kind=coherent --depths 1,2,4,8,16,32,64
+rt-rays        rt    rt.rays      --param preset=medium --param kind=incoherent --depths 1,2,4,8,16,32,64
+rt-rays        rt    rt.rays      --param preset=medium --param kind=coherent --param rays=1048576 --depths 1,4
+rt-rays        rt    rt.rays      --param preset=medium --param kind=incoherent --param rays=1048576 --depths 1,4
+
+# One-parameter sweeps from the medium preset (tools/sweep.py plan --base medium --quick; analyse
+# with tools/sweep.py analyze). Short windows: 0.8 s warm-up, 3 x 0.7 s untimed, 3 x 0.7 s timed.
+rt-sweep-res           rt rt.scene --tag sweep:res --param preset=medium  --param res=1280x720 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-res           rt rt.scene --tag sweep:res --param preset=medium  --param res=1920x1080 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-res           rt rt.scene --tag sweep:res --param preset=medium  --param res=2560x1440 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-res           rt rt.scene --tag sweep:res --param preset=medium  --param res=3840x2160 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-reflective    rt rt.scene --tag sweep:reflective --param preset=medium  --param reflective=0 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-reflective    rt rt.scene --tag sweep:reflective --param preset=medium  --param reflective=0.25 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-reflective    rt rt.scene --tag sweep:reflective --param preset=medium  --param reflective=0.5 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-reflective    rt rt.scene --tag sweep:reflective --param preset=medium  --param reflective=0.75 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-reflective    rt rt.scene --tag sweep:reflective --param preset=medium  --param reflective=1 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-rpp           rt rt.scene --tag sweep:rpp --param preset=medium  --param rpp=1 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-rpp           rt rt.scene --tag sweep:rpp --param preset=medium  --param rpp=2 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-rpp           rt rt.scene --tag sweep:rpp --param preset=medium  --param rpp=4 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-rpp           rt rt.scene --tag sweep:rpp --param preset=medium  --param rpp=8 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-bounces       rt rt.scene --tag sweep:bounces --param preset=medium  --param bounces=1 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-bounces       rt rt.scene --tag sweep:bounces --param preset=medium  --param bounces=2 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-bounces       rt rt.scene --tag sweep:bounces --param preset=medium  --param bounces=3 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-bounces       rt rt.scene --tag sweep:bounces --param preset=medium  --param bounces=4 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-bounces       rt rt.scene --tag sweep:bounces --param preset=medium  --param bounces=6 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-shadows       rt rt.scene --tag sweep:shadows --param preset=medium  --param shadows=0 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-shadows       rt rt.scene --tag sweep:shadows --param preset=medium  --param shadows=1 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-tmax          rt rt.scene --tag sweep:tmax --param preset=medium  --param tmax=25 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-tmax          rt rt.scene --tag sweep:tmax --param preset=medium  --param tmax=100 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-tmax          rt rt.scene --tag sweep:tmax --param preset=medium  --param tmax=400 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-tmax          rt rt.scene --tag sweep:tmax --param preset=medium  --param tmax=1600 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-alpha         rt rt.scene --tag sweep:alpha --param preset=medium  --param alpha=0 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-alpha         rt rt.scene --tag sweep:alpha --param preset=medium  --param alpha=1 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-mesh-tris     rt rt.scene --tag sweep:mesh-tris --param preset=medium  --param mesh-tris=5000 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-mesh-tris     rt rt.scene --tag sweep:mesh-tris --param preset=medium  --param mesh-tris=20000 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-mesh-tris     rt rt.scene --tag sweep:mesh-tris --param preset=medium  --param mesh-tris=80000 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-mesh-tris     rt rt.scene --tag sweep:mesh-tris --param preset=medium  --param mesh-tris=160000 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-instances     rt rt.scene --tag sweep:instances --param preset=medium  --param instances=64 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-instances     rt rt.scene --tag sweep:instances --param preset=medium  --param instances=256 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-instances     rt rt.scene --tag sweep:instances --param preset=medium  --param instances=1024 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-instances     rt rt.scene --tag sweep:instances --param preset=medium  --param instances=4096 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-water-tris    rt rt.scene --tag sweep:water-tris --param preset=medium  --param water-tris=8192 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-water-tris    rt rt.scene --tag sweep:water-tris --param preset=medium  --param water-tris=32768 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-water-tris    rt rt.scene --tag sweep:water-tris --param preset=medium  --param water-tris=131072 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-water-tris    rt rt.scene --tag sweep:water-tris --param preset=medium  --param water-tris=524288 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-dyn-patches   rt rt.scene --tag sweep:dyn-patches --param preset=medium --param blas=refit --param dyn-patches=1 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-dyn-patches   rt rt.scene --tag sweep:dyn-patches --param preset=medium --param blas=refit --param dyn-patches=4 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-dyn-patches   rt rt.scene --tag sweep:dyn-patches --param preset=medium --param blas=refit --param dyn-patches=8 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-dyn-patches   rt rt.scene --tag sweep:dyn-patches --param preset=medium --param blas=refit --param dyn-patches=16 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-blas          rt rt.scene --tag sweep:blas --param preset=medium --param dyn-patches=16 --param blas=static --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-blas          rt rt.scene --tag sweep:blas --param preset=medium --param dyn-patches=16 --param blas=refit --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-blas          rt rt.scene --tag sweep:blas --param preset=medium --param dyn-patches=16 --param blas=rebuild --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-tlas          rt rt.scene --tag sweep:tlas --param preset=medium  --param tlas=static --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-tlas          rt rt.scene --tag sweep:tlas --param preset=medium  --param tlas=refit --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-tlas          rt rt.scene --tag sweep:tlas --param preset=medium  --param tlas=rebuild --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-moving        rt rt.scene --tag sweep:moving --param preset=medium --param tlas=rebuild --param moving=0.1 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-moving        rt rt.scene --tag sweep:moving --param preset=medium --param tlas=rebuild --param moving=0.25 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-moving        rt rt.scene --tag sweep:moving --param preset=medium --param tlas=rebuild --param moving=0.5 --warmup-ms 800 --runs 3 --run-ms 700
+rt-sweep-moving        rt rt.scene --tag sweep:moving --param preset=medium --param tlas=rebuild --param moving=1 --warmup-ms 800 --runs 3 --run-ms 700

@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 460
+// Water deformation: writes positions, normals and UVs of the water patch slots
+// [first_slot, first_slot + nslots). Dispatch: x = ceil(verts per patch / 64), y = nslots.
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+layout(local_size_x = 64) in;
+layout(push_constant) uniform PC { uint vbase; uint grid; uint first_slot; uint nslots; float size; float time; } pc;
+layout(std430, set = 0, binding = 0) buffer VB { Vertex verts[]; };
+
+const uint water_cell[16] = uint[16](5u, 6u, 9u, 10u, 1u, 2u, 4u, 7u, 8u, 11u, 13u, 14u, 0u, 3u, 12u, 15u);
+
+void main()
+{
+   uint g1 = pc.grid + 1u;
+   uint vpp = g1 * g1;
+   uint id = gl_GlobalInvocationID.x;
+   uint slot = pc.first_slot + gl_GlobalInvocationID.y;
+   if (id >= vpp) return;
+   uint cell = water_cell[slot];
+   uint i = id % g1, j = id / g1;
+   float ps = pc.size * 0.25;
+   float fu = float(i) / float(pc.grid), fv = float(j) / float(pc.grid);
+   float x = -0.5 * pc.size + float(cell % 4u) * ps + fu * ps;
+   float z = -0.5 * pc.size + float(cell / 4u) * ps + fv * ps;
+   float t = pc.time;
+
+   float h0 = 0.12 * sin(0.31 * x + 0.7) * sin(0.27 * z + 0.3);
+   float h0x = 0.12 * 0.31 * cos(0.31 * x + 0.7) * sin(0.27 * z + 0.3);
+   float h0z = 0.12 * 0.27 * sin(0.31 * x + 0.7) * cos(0.27 * z + 0.3);
+   float hd = 0.35 * sin(0.23 * x + 1.3 * t) + 0.25 * sin(0.19 * z - 1.1 * t + 0.5) +
+              0.12 * sin(0.41 * (x + z) + 2.1 * t);
+   float hdx = 0.35 * 0.23 * cos(0.23 * x + 1.3 * t) + 0.12 * 0.41 * cos(0.41 * (x + z) + 2.1 * t);
+   float hdz = 0.25 * 0.19 * cos(0.19 * z - 1.1 * t + 0.5) + 0.12 * 0.41 * cos(0.41 * (x + z) + 2.1 * t);
+   // window: zero at the patch border so neighbouring patches always meet
+   float w = sin(PI * fu) * sin(PI * fv);
+   float wx = PI / ps * cos(PI * fu) * sin(PI * fv);
+   float wz = PI / ps * sin(PI * fu) * cos(PI * fv);
+   float h = h0 + w * hd;
+   float hx = h0x + w * hdx + wx * hd;
+   float hz = h0z + w * hdz + wz * hd;
+   vec3 n = normalize(vec3(-hx, 1.0, -hz));
+   Vertex o;
+   o.px = x; o.py = h; o.pz = z;
+   o.nx = n.x; o.ny = n.y; o.nz = n.z;
+   o.u = x * 0.1; o.v = z * 0.1;
+   verts[pc.vbase + slot * vpp + id] = o;
+}

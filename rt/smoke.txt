@@ -1,0 +1,5 @@
+# Short functional check on a device (a few seconds per line): images and ray counts.
+rt-smoke   rt  rt.scene   --param preset=light --warmup-ms 500 --runs 2 --run-ms 500 --png /var/tmp/gpubench-rt/smoke-light.png --shader-stats
+rt-smoke   rt  rt.scene   --param preset=medium --warmup-ms 800 --runs 2 --run-ms 500 --png /var/tmp/gpubench-rt/smoke-medium.png --shader-stats
+rt-smoke   rt  rt.asbuild --param kind=blas --param tris=65536 --warmup-ms 200 --runs 2 --run-ms 200
+rt-smoke   rt  rt.rays    --param preset=medium --param kind=coherent --depths 1,8 --warmup-ms 200 --runs 2 --run-ms 200

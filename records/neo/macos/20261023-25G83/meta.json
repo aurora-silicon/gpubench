@@ -1,0 +1,50 @@
+{
+  "schema": "gpubench-record/1",
+  "device": "neo",
+  "os": "macos",
+  "os_version": "26.6.2",
+  "os_build": "25G83",
+  "kernel": "Darwin Kernel Version 25.6.0: Fri Jul 31 19:16:38 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T8140",
+  "kernel_module": null,
+  "driver": {
+    "schema": "gpubench-info/1",
+    "api": "metal",
+    "device_name": "Apple A18 Pro",
+    "os_version": "Version 26.6.2 (Build 25G83)",
+    "os_build": "25G83",
+    "hw_model": "Mac17,5",
+    "gpu_family": "apple9",
+    "recommended_working_set_bytes": 5726633984,
+    "unified_memory": true,
+    "counter_sampling_stage_boundary": true
+  },
+  "mesa_sha": null,
+  "gpu": {
+    "name": "Apple A18 Pro"
+  },
+  "firmware": null,
+  "date_utc": "2026-10-23T07:13:28Z",
+  "host": "neo",
+  "suite_sha": "3a13953",
+  "runner": {
+    "chunks": "core-a,core-b,core-c,multi,feat,mem,tvb,rt-scene-a,rt-scene-b,rt-scene-c,rt-pipe,rt-stamps,rt-asbuild,rt-rays,rt-sweep-res,rt-sweep-reflective,rt-sweep-rpp,rt-sweep-bounces,rt-sweep-shadows,rt-sweep-tmax,rt-sweep-alpha,rt-sweep-mesh-tris,rt-sweep-instances,rt-sweep-water-tris,rt-sweep-dyn-patches,rt-sweep-blas,rt-sweep-tlas,rt-sweep-moving",
+    "env": {},
+    "duration_s": 739
+  },
+  "state_before": {
+    "therm": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "powermetrics": "Current pressure level: Moderate\nGPU HW active frequency: 0 MHz\nGPU HW active residency:   0.00% (338 MHz:   0% 492 MHz:   0% 618 MHz:   0% 796 MHz:   0% 928 MHz:   0% 952 MHz:   0% 1056 MHz:   0% 1053 MHz:   0% 1170 MHz:   0% 1152 MHz:   0% 1278 MHz:   0% 1204 MHz:   0% 1338 MHz:   0% 1326 MHz:   0% 1470 MHz:   0%)\nGPU SW requested state: (P1 :   0% P2 :   0% P3 :   0% P4 :   0% P5 :   0% P6 :   0% P7 :   0% P8 :   0% P9 :   0% P10 :   0% P11 :   0% P12 :   0% P13 :   0% P14 :   0% P15 :   0%)\nGPU SW state: (SW_P1 :   0% SW_P2 :   0% SW_P3 :   0% SW_P4 :   0% SW_P5 :   0% SW_P6 :   0% SW_P7 :   0% SW_P8 :   0% SW_P9 :   0% SW_P10 :   0% SW_P11 :   0% SW_P12 :   0% SW_P13 :   0% SW_P14 :   0% SW_P15 :   0%)\nGPU idle residency: 100.00%\nGPU Power: 0 mW",
+    "loadavg": "{ 42.04 32.84 14.44 }"
+  },
+  "state_after": {
+    "therm": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "powermetrics": "Current pressure level: Moderate\nGPU HW active frequency: 0 MHz\nGPU HW active residency:   0.00% (338 MHz:   0% 492 MHz:   0% 618 MHz:   0% 796 MHz:   0% 928 MHz:   0% 952 MHz:   0% 1056 MHz:   0% 1053 MHz:   0% 1170 MHz:   0% 1152 MHz:   0% 1278 MHz:   0% 1204 MHz:   0% 1338 MHz:   0% 1326 MHz:   0% 1470 MHz:   0%)\nGPU SW requested state: (P1 :   0% P2 :   0% P3 :   0% P4 :   0% P5 :   0% P6 :   0% P7 :   0% P8 :   0% P9 :   0% P10 :   0% P11 :   0% P12 :   0% P13 :   0% P14 :   0% P15 :   0%)\nGPU SW state: (SW_P1 :   0% SW_P2 :   0% SW_P3 :   0% SW_P4 :   0% SW_P5 :   0% SW_P6 :   0% SW_P7 :   0% SW_P8 :   0% SW_P9 :   0% SW_P10 :   0% SW_P11 :   0% SW_P12 :   0% SW_P13 :   0% SW_P14 :   0% SW_P15 :   0%)\nGPU idle residency: 100.00%\nGPU Power: 0 mW",
+    "loadavg": "{ 3.16 5.52 7.76 }"
+  },
+  "health": null,
+  "notes": "",
+  "publication": {
+    "host_label_normalized": true,
+    "measurements_unchanged": true
+  }
+}

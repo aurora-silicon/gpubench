@@ -1,0 +1,52 @@
+{
+  "schema": "gpubench-record/1",
+  "device": "m5-pro",
+  "os": "macos",
+  "os_version": "27.2",
+  "os_build": "26B5086k",
+  "kernel": "Darwin Kernel Version 27.2.0: Fri Sep  4 23:30:00 PDT 2026; root:xnu-13432.40.144.0.1~53/RELEASE_ARM64_T6050",
+  "kernel_module": null,
+  "driver": {
+    "schema": "gpubench-info/1",
+    "api": "metal",
+    "device_name": "Apple M5 Pro",
+    "os_version": "Version 27.2 (Build 26B5086k)",
+    "os_build": "26B5086k",
+    "hw_model": "Mac17,9",
+    "gpu_family": "apple9",
+    "recommended_working_set_bytes": 55662788608,
+    "unified_memory": true,
+    "counter_sampling_stage_boundary": true
+  },
+  "mesa_sha": null,
+  "gpu": {
+    "name": "Apple M5 Pro"
+  },
+  "firmware": null,
+  "date_utc": "2026-10-23T10:17:31Z",
+  "host": "m5-pro",
+  "suite_sha": "311a5e6b3ce123869d283b9b29ba6d469e4ddb2f",
+  "runner": {
+    "chunks": "core-a,core-b,multi,feat",
+    "env": {
+      "GB_LINE_TIMEOUT": "180"
+    },
+    "duration_s": 200
+  },
+  "state_before": {
+    "therm": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "powermetrics": null,
+    "loadavg": "{ 4.69 9.93 5.52 }"
+  },
+  "state_after": {
+    "therm": "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded",
+    "powermetrics": null,
+    "loadavg": "{ 5.43 8.00 5.62 }"
+  },
+  "health": null,
+  "notes": "Pinned suite 311a5e6b3ce123869d283b9b29ba6d469e4ddb2f; M5 Pro main macOS; native unprivileged run; privileged power sampling unavailable",
+  "publication": {
+    "host_label_normalized": true,
+    "measurements_unchanged": true
+  }
+}

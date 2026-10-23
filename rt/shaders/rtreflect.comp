@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 460
+// Ray-traced reflections and shadows with inline ray queries (the Solar Bay approach), one
+// invocation per pixel, 8x8 workgroups. Reads the G-buffer, writes RGB = reflected radiance,
+// A = primary shadow factor. MSL twin: rt_reflect in rt.metal.
+#extension GL_EXT_ray_query : require
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+#include "rtres.glsl"
+
+bool trace_closest(vec3 o, vec3 d, float tmax, out float t, out uint inst, out uint prim, out vec2 bary)
+{
+   rayQueryEXT rq;
+   rayQueryInitializeEXT(rq, tlas, gl_RayFlagsNoneEXT, 0xFFu, o, 0.0, d, tmax);
+   while (rayQueryProceedEXT(rq)) {
+      if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
+         if (candidate_opaque(rayQueryGetIntersectionInstanceIdEXT(rq, false),
+                              rayQueryGetIntersectionPrimitiveIndexEXT(rq, false),
+                              rayQueryGetIntersectionBarycentricsEXT(rq, false)))
+            rayQueryConfirmIntersectionEXT(rq);
+      }
+   }
+   if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionNoneEXT)
+      return false;
+   t = rayQueryGetIntersectionTEXT(rq, true);
+   inst = rayQueryGetIntersectionInstanceIdEXT(rq, true);
+   prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
+   bary = rayQueryGetIntersectionBarycentricsEXT(rq, true);
+   return true;
+}
+
+bool trace_shadow(vec3 o, vec3 d, float tmax)
+{
+   rayQueryEXT rq;
+   rayQueryInitializeEXT(rq, tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0xFFu, o, 0.0, d, tmax);
+   while (rayQueryProceedEXT(rq)) {
+      if (rayQueryGetIntersectionTypeEXT(rq, false) == gl_RayQueryCandidateIntersectionTriangleEXT) {
+         if (candidate_opaque(rayQueryGetIntersectionInstanceIdEXT(rq, false),
+                              rayQueryGetIntersectionPrimitiveIndexEXT(rq, false),
+                              rayQueryGetIntersectionBarycentricsEXT(rq, false)))
+            rayQueryConfirmIntersectionEXT(rq);
+      }
+   }
+   return rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+#include "rtshade.glsl"
+
+void main()
+{
+   shade_pixel(gl_GlobalInvocationID.xy);
+}

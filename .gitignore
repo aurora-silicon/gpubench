@@ -1,0 +1,15 @@
+build/
+bin/
+*.o
+__pycache__/
+*.pyc
+*.a
+*.so
+*.dylib
+*.metallib
+*.air
+*.spv
+*.bin
+*.dSYM/
+.DS_Store
+cmake-build*/

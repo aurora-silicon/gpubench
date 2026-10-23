@@ -1,0 +1,53 @@
+# gpubench standard plan.
+# chunk   lane   test            arguments
+# Each chunk is sized to run in about two minutes or less on Neo.
+
+# Submission path at depth, one queue.
+core-a   suite  submit.empty    --depths 1,2,4,8,16,32,64
+core-a   suite  compute.light   --depths 1,2,4,8,16,32,64
+core-a   suite  render.light    --depths 1,2,4,8,16,32,64 --param kind=tri
+core-a   suite  render.light    --depths 1,8 --param kind=clear
+
+# Heavy work at depth, one queue.
+core-b   suite  compute.heavy   --depths 1,2,4,8,16,32,64 --param kind=alu
+core-b   suite  compute.heavy   --depths 1,2,4,8,16,32,64 --param kind=bw
+core-b   suite  render.heavy    --depths 1,2,4,8,16,32,64 --param kind=fill --param res=1080p
+core-c   suite  render.heavy    --depths 1,4,16,64 --param kind=fill --param res=720p
+core-c   suite  render.heavy    --depths 1,4,16,64 --param kind=fill --param res=2160p
+core-c   suite  render.heavy    --depths 1,2,4,8,16,32,64 --param kind=geom --param res=1080p
+
+# Multi-queue and multi-process axes.
+multi    suite  compute.light   --mode queues --depths 2,4,8
+multi    suite  render.light    --mode queues --depths 2,4,8 --param kind=tri
+multi    suite  compute.heavy   --mode queues --depths 2,4,8 --param kind=alu
+multi    suite  compute.light   --mode procs  --depths 2,4,8,16
+multi    suite  render.light    --mode procs  --depths 2,4,8,16 --param kind=tri
+multi    suite  compute.heavy   --mode procs  --depths 2,4,8 --param kind=alu
+
+# Driver-path features.
+feat     suite  sync.signal     --param kind=host
+feat     suite  sync.signal     --param kind=queue --param sema=timeline
+feat     suite  sync.signal     --param kind=queue --param sema=binary
+feat     suite  copy.bw         --depths 1,4 --param kind=buf2buf
+feat     suite  copy.bw         --depths 1,4 --param kind=buf2img
+feat     suite  copy.bw         --depths 1,4 --param kind=fill
+feat     suite  concurrent.cr   --param mode=queues
+feat     suite  concurrent.cr   --param mode=interleave
+feat     suite  query           --depths 1,16 --param kind=timestamp
+feat     suite  query           --depths 1,16 --param kind=occlusion
+feat     suite  idle.wake       --param gap_ms=2
+feat     suite  idle.wake       --param gap_ms=20
+feat     suite  idle.wake       --param gap_ms=200
+mem      suite  mem.buffer      --param size=4096
+mem      suite  mem.buffer      --param size=65536
+mem      suite  mem.buffer      --param size=1048576
+mem      suite  mem.buffer      --param size=16777216
+mem      suite  mem.buffer      --param size=67108864
+mem      suite  mem.image       --param dim=256
+mem      suite  mem.image       --param dim=1024
+mem      suite  mem.image       --param dim=4096
+
+# Tiler-memory overflow last: a fault here cannot cost the other chunks.
+tvb      suite  render.tvb      --depths 1,4 --param tris=8192
+tvb      suite  render.tvb      --depths 1,4 --param tris=32768
+tvb      suite  render.tvb      --depths 1,4 --param tris=131072

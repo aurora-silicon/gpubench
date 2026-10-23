@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 460
+// Micro-benchmark: one closest-hit ray per invocation against the static scene, opaque traversal
+// (no any-hit). mode 0 = coherent (pinhole camera rays over a 1024-wide grid), 1 = incoherent
+// (random origins in the scene volume, random directions). Writes the hit distance so nothing is
+// optimised away. MSL twin: rays in rt.metal.
+#extension GL_EXT_ray_query : require
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas;
+layout(std430, set = 0, binding = 1) writeonly buffer OUT { float result[]; };
+layout(push_constant) uniform PC {
+   vec4 eye;      // xyz, w = tmax
+   vec4 fwd;      // camera forward
+   vec4 right;    // camera right * tan(fov/2) * aspect
+   vec4 up;       // camera up * tan(fov/2)
+   uint mode, nrays, seed, width;
+} pc;
+
+void main()
+{
+   uint id = gl_GlobalInvocationID.x;
+   if (id >= pc.nrays) return;
+   vec3 o, d;
+   if (pc.mode == 0u) {
+      uint x = id % pc.width, y = id / pc.width;
+      uint h = (pc.nrays + pc.width - 1u) / pc.width;
+      vec2 ndc = (vec2(float(x), float(y)) + 0.5) / vec2(float(pc.width), float(h)) * 2.0 - 1.0;
+      o = pc.eye.xyz;
+      d = normalize(pc.fwd.xyz + ndc.x * pc.right.xyz - ndc.y * pc.up.xyz);
+   } else {
+      uint s = pcg(id ^ pcg(pc.seed));
+      o = vec3(u01(s) * 120.0 - 60.0, 0.5 + u01(s) * 8.0, u01(s) * 120.0 - 60.0);
+      d = rand_dir(s);
+   }
+   rayQueryEXT rq;
+   rayQueryInitializeEXT(rq, tlas, gl_RayFlagsOpaqueEXT, 0xFFu, o, 0.0, d, pc.eye.w);
+   while (rayQueryProceedEXT(rq)) {
+   }
+   float t = -1.0;
+   if (rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionNoneEXT)
+      t = rayQueryGetIntersectionTEXT(rq, true);
+   result[id] = t;
+}

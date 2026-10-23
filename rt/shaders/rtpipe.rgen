@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 460
+// Ray-tracing pipeline variant of rtreflect.comp (trace=pipeline, Vulkan only): the same per-pixel
+// shading, with traceRayEXT instead of ray queries. Closest hit returns the hit record, any hit
+// does the alpha test, miss 0 marks no hit, miss 1 clears the shadow payload.
+#extension GL_EXT_ray_tracing : require
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "rtres.glsl"
+#include "rtpayload.glsl"
+
+layout(location = 0) rayPayloadEXT HitPayload hp_;
+layout(location = 1) rayPayloadEXT uint shadow_hit_;
+
+bool trace_closest(vec3 o, vec3 d, float tmax, out float t, out uint inst, out uint prim, out vec2 bary)
+{
+   hp_.t = -1.0;
+   traceRayEXT(tlas, gl_RayFlagsNoneEXT, 0xFFu, 0u, 0u, 0u, o, 0.0, d, tmax, 0);
+   t = hp_.t;
+   inst = hp_.inst;
+   prim = hp_.prim;
+   bary = hp_.bary;
+   return hp_.t >= 0.0;
+}
+
+bool trace_shadow(vec3 o, vec3 d, float tmax)
+{
+   shadow_hit_ = 1u;
+   traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, 0xFFu, 0u, 0u, 1u, o,
+               0.0, d, tmax, 1);
+   return shadow_hit_ != 0u;
+}
+
+#include "rtshade.glsl"
+
+void main()
+{
+   shade_pixel(gl_LaunchIDEXT.xy);
+}

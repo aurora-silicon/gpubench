@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+// compute.light: one workgroup of 32 threads, one store each.
+layout(local_size_x = 32) in;
+layout(set = 0, binding = 0) buffer Out { uint o[]; };
+layout(push_constant) uniform PC { uint v; } pc;
+void main()
+{
+   uint gid = gl_GlobalInvocationID.x;
+   o[gid] = pc.v + gid;
+}
