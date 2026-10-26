@@ -102,13 +102,13 @@ VkResult vk_ctx_init(vk_ctx *c, int device_index, int want_rtp, int want_stats, 
 
    const char *exts[16];
    uint32_t ne = 0;
-   int rt = c->has_as && c->has_rq;
-   if (rt) {
+   if (c->has_as) {
       exts[ne++] = "VK_KHR_acceleration_structure";
       exts[ne++] = "VK_KHR_deferred_host_operations";
-      exts[ne++] = "VK_KHR_ray_query";
    }
-   int rtp = rt && want_rtp && c->has_rtp;
+   int rq = c->has_as && c->has_rq;
+   if (rq) exts[ne++] = "VK_KHR_ray_query";
+   int rtp = rq && want_rtp && c->has_rtp;
    if (rtp) exts[ne++] = "VK_KHR_ray_tracing_pipeline";
    c->exec_props_enabled = want_stats && c->has_exec_props;
    if (c->exec_props_enabled) exts[ne++] = "VK_KHR_pipeline_executable_properties";
@@ -132,8 +132,10 @@ VkResult vk_ctx_init(vk_ctx *c, int device_index, int want_rtp, int want_stats, 
                                            .hostQueryReset = VK_TRUE,
                                            .timelineSemaphore = VK_TRUE};
    void **tail = &f13.pNext;
-   if (rt) {
+   if (c->has_as) {
       *tail = &fas; tail = &fas.pNext;
+   }
+   if (rq) {
       *tail = &frq; tail = &frq.pNext;
    }
    if (rtp) { *tail = &frtp; tail = &frtp.pNext; }
@@ -153,9 +155,9 @@ VkResult vk_ctx_init(vk_ctx *c, int device_index, int want_rtp, int want_stats, 
    VKC(vkCreateDevice(c->phys, &dci, NULL, &c->dev));
    vkGetDeviceQueue(c->dev, c->qfam, 0, &c->queue);
    c->has_rtp = rtp;
-   if (!rt) c->has_as = c->has_rq = 0;
+   c->has_rq = rq;
 #define GP(field, name) c->field = (void *)vkGetDeviceProcAddr(c->dev, name)
-   if (rt) {
+   if (c->has_as) {
       GP(CreateAS, "vkCreateAccelerationStructureKHR");
       GP(DestroyAS, "vkDestroyAccelerationStructureKHR");
       GP(GetASBuildSizes, "vkGetAccelerationStructureBuildSizesKHR");

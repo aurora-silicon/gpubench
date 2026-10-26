@@ -476,9 +476,13 @@ static int run_test(vk_ctx *c, const rt_params *p, const rt_run *r, int test)
          rt_result_skip(test, p, r->mode, r->depths[d], "rt micro-tests run only in mode=queue");
       return 0;
    }
-   if (!c->has_as || !c->has_rq) {
+   /* Construction does not execute ray queries. Keep the traversal
+    * requirement on rt.rays, while admitting genuine AS-only devices. */
+   if (!c->has_as || (test == RT_TEST_RAYS && !c->has_rq)) {
       for (uint32_t d = 0; d < r->ndepths; d++)
-         rt_result_skip(test, p, r->mode, r->depths[d], "device lacks VK_KHR_acceleration_structure/ray_query");
+         rt_result_skip(test, p, r->mode, r->depths[d],
+                        !c->has_as ? "device lacks VK_KHR_acceleration_structure" :
+                                     "device lacks VK_KHR_ray_query");
       return 0;
    }
    if (test == RT_TEST_ASBUILD && strcmp(p->kind, "blas") && strcmp(p->kind, "refit") && strcmp(p->kind, "tlas")) {
