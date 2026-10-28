@@ -78,9 +78,13 @@ references, encode, commit), because Metal has no reusable command buffers.
   windows): Vulkan writes a timestamp at the start and the end of each command
   buffer (host query reset, no in-stream reset commands); Metal reads
   `GPUStartTime`/`GPUEndTime` of each command buffer.
-  - `gpu_us`: end - start per submission.
+  - `gpu_us`: end - start per submission, where start is the later of the
+    submission's own start stamp and the previous submission's end. Vulkan
+    lets a driver write the top-of-pipe stamp as soon as the queue reaches it,
+    so at depth >= 2 the raw start can precede earlier work finishing.
   - `gpu_gap_us`: start of submission k - end of k-1 on the same queue (GPU
-    idle between back-to-back submissions; meaningful at depth >= 2).
+    idle between back-to-back submissions; meaningful at depth >= 2). A
+    negative value means the start stamp was written before k-1 finished.
   - `us_per_submit_timed`: wall-clock rate during the timed pass. On hk
     timestamps ride on command retirement, so the difference from
     `us_per_submit` is itself a measured cost.

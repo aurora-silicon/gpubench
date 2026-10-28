@@ -797,7 +797,13 @@ gb_stream_run(struct gb_stream *s, bool timed, uint64_t t0, uint64_t warmup_ns, 
                                       VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS) {
                uint64_t a = ts[0] & s->vk->ts_mask, b = ts[1] & s->vk->ts_mask;
                if (measured) {
-                  gb_samples_push(&out->gpu, (double)(b - a) * s->vk->ts_period_ns / 1e3);
+                  /* A driver may write the top-of-pipe stamp as soon as the
+                   * queue reaches it, before earlier submissions finish, so
+                   * b - a would include their work at depth > 1. Count this
+                   * submission from the later of its stamp and the previous
+                   * end. gpu_gap_us keeps the raw difference. */
+                  uint64_t start = have_last && last_end > a ? last_end : a;
+                  gb_samples_push(&out->gpu, b > start ? (double)(b - start) * s->vk->ts_period_ns / 1e3 : 0);
                   if (have_last)
                      gb_samples_push(&out->gap, ((double)a - (double)last_end) * s->vk->ts_period_ns / 1e3);
                }
