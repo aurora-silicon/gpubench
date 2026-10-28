@@ -788,7 +788,7 @@ gb_stream_run(struct gb_stream *s, bool timed, uint64_t t0, uint64_t warmup_ns, 
          uint64_t t = gb_now_ns();
          bool measured = t >= tm0 && t < t_end;
          if (measured) {
-            out->win_count[(t - tm0) / win_ns]++;
+            gb_pass_count(out, t, tm0, win_ns);
             gb_samples_push(&out->latency, (t - s->submit_ns[slot]) / 1e3);
          }
          if (timed) {

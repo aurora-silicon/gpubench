@@ -617,16 +617,27 @@ run_query(const struct gb_opts *o)
    for (int di = 0; di < nd; di++) {
       int d = depths[di];
       struct gb_pass base = {0}, q = {0};
-      struct gb_stream s;
-      gb_stream_init(&s, &vk, 0, d, occl ? r_record : cl_record, NULL, occl ? (void *)st.rl : (void *)st.cl);
-      gb_stream_run(&s, false, gb_now_ns(), W, o->runs, R, &base);
-      gb_stream_finish(&s);
-      gb_stream_init(&s, &vk, 0, d, q_record, q_done, &st);
       gb_samples_clear(&st.readback);
-      st.collect = true;
-      gb_stream_run(&s, false, gb_now_ns(), W, o->runs, R, &q);
-      st.collect = false;
-      gb_stream_finish(&s);
+      /* Base and query windows alternate in ABBA order, so a drift of the GPU's or the system's state over the
+       * row (a warm-up, a clock ramp) falls on both alike instead of showing as an overhead of either sign. */
+      for (int run = 0; run < o->runs; run++) {
+         for (int half = 0; half < 2; half++) {
+            bool with_query = (half == 1) == (run % 2 == 0);
+            struct gb_pass one = {0};
+            struct gb_stream s;
+            if (with_query)
+               gb_stream_init(&s, &vk, 0, d, q_record, q_done, &st);
+            else
+               gb_stream_init(&s, &vk, 0, d, occl ? r_record : cl_record, NULL,
+                              occl ? (void *)st.rl : (void *)st.cl);
+            st.collect = with_query;
+            gb_stream_run(&s, false, gb_now_ns(), W, 1, R, &one);
+            st.collect = false;
+            gb_stream_finish(&s);
+            gb_pass_append(with_query ? &q : &base, &one);
+            gb_pass_free(&one);
+         }
+      }
 
       struct gb_result r;
       gb_result_begin(&r, o, GB_MODE_QUEUE, d, NULL);

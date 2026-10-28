@@ -140,12 +140,25 @@ struct gb_pass {
    int nwin;
    double win_s;
    uint64_t win_count[GB_MAX_WIN];
+   /* Each window's first and last completion (gb_now_ns), for its rate. */
+   uint64_t win_first_ns[GB_MAX_WIN], win_last_ns[GB_MAX_WIN];
    struct gb_samples latency, submit_cpu, record_cpu, gpu, gap;
    uint64_t submits;
    bool timed, failed;
 };
 void gb_pass_free(struct gb_pass *p);
+/* Count a completion at t in its window (t in [tm0, tm0 + nwin * win_ns)). */
+static inline void
+gb_pass_count(struct gb_pass *p, uint64_t t, uint64_t tm0, uint64_t win_ns)
+{
+   int w = (int)((t - tm0) / win_ns);
+   if (!p->win_count[w]++)
+      p->win_first_ns[w] = t;
+   p->win_last_ns[w] = t;
+}
 void gb_pass_merge(struct gb_pass *dst, const struct gb_pass *src);
+/* Appends src's windows after dst's, as later windows of the same pass. */
+void gb_pass_append(struct gb_pass *dst, const struct gb_pass *src);
 /* us_per_submit per window */
 void gb_pass_rate(const struct gb_pass *p, struct gb_samples *us_per_submit);
 int gb_pass_put(int fd, const struct gb_pass *p);
