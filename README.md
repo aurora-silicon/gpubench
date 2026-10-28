@@ -38,6 +38,8 @@ tools/run-linux.sh --device my-device --chunks core-a,core-b,multi,feat
 
 Set `VK_DRIVER_FILES` to select a specific driver. The Linux runner accepts `--lock FILE` to coordinate GPU use with other jobs. Use `--chunks core-a` for the submission tests, or omit `--chunks` for the complete standard and ray-tracing plans.
 
+Set `GB_COOLDOWN_CMD` to a script to run before each chunk, for example one that waits for the GPU to cool. It gets the record directory and the chunk name as arguments. It is skipped after a chunk that recorded no ok rows, such as ray-tracing chunks on a driver without ray tracing.
+
 For a short functional run, set `GB_WARMUP_MS=20 GB_RUNS=1 GB_RUN_MS=40 GB_TIMED_RUNS=1`. Keep those results separate from measured runs.
 
 ## Layout
