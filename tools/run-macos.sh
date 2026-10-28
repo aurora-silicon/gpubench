@@ -55,7 +55,15 @@ echo "record: $REC"
 PLANS="$ROOT/suite/plan.txt"; [ -f "$ROOT/rt/plan.txt" ] && PLANS="$PLANS $ROOT/rt/plan.txt"
 ALL=$(cat $PLANS | awk '$1 !~ /^#/ && NF >= 3 {print $1}' | awk '!seen[$0]++')
 if [ -n "$CHUNKS" ]; then SEL=$(echo "$CHUNKS" | tr ',' ' '); else SEL=$ALL; fi
+OK_PREV=-1
 for c in $SEL; do
+  # Optional cool-down before each chunk. A chunk that recorded no ok rows
+  # added no heat, so the chunk after it starts without one.
+  OK=$(grep -c '"status":"ok"' "$REC/results.jsonl" 2>/dev/null || true)
+  if [ -n "${GB_COOLDOWN_CMD:-}" ] && [ "$OK" != "$OK_PREV" ]; then
+    sh "$GB_COOLDOWN_CMD" "$REC" "$c"
+  fi
+  OK_PREV=$OK
   echo "$(date +%T) chunk $c"
   "$HERE/run-suite.sh" --api mtl --bin "$BIN" --out "$REC" --chunks "$c" ${TESTS:+--tests "$TESTS"} --plans "$PLANS"
 done
