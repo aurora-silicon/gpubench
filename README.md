@@ -47,7 +47,7 @@ For a short functional run, set `GB_WARMUP_MS=20 GB_RUNS=1 GB_RUN_MS=40 GB_TIMED
 - [suite/](suite/README.md): standard compute, render, synchronization, and memory benchmarks.
 - [rt/](rt/README.md): ray-tracing scenes and microbenchmarks.
 - [records/](records/README.md): per-device records and JSON schema.
-- `tools/`: portable builders, runners, and record comparison.
+- `tools/`: portable builders, runners, and record comparison. `tools/performance-gate.py` is the strict full-record gate: a Linux record passes only when every comparable row beats the Neo macOS reference ([details](tools/performance-gate.md)).
 
 ## License
 
