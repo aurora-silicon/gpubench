@@ -432,7 +432,7 @@ copy_record(void *p, VkCommandBuffer cb, uint64_t k)
       break;
    }
    case C_FILL:
-      vkCmdFillBuffer(cb, st->dst.buf, 0, GB_COPY_BYTES, 0x3f800000u);
+      vkCmdFillBuffer(cb, st->dst.buf, 0, GB_COPY_BYTES, 0x3f3f3f3fu);
       break;
    }
 }

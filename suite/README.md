@@ -110,11 +110,11 @@ references, encode, commit), because Metal has no reusable command buffers.
     the tip tree does. Check that `gpu_us` tracks the work before trusting it.
 - **Occlusion:** a non-precise occlusion query on Vulkan; the boolean
   visibility result mode on Metal.
-- **Fills:** `vkCmdFillBuffer` writes a 32-bit pattern and Metal
-  `fillBuffer` writes a byte. Same size, same bandwidth.
+- **Fills:** both backends write repeated `0x3f` bytes. Vulkan uses the
+  32-bit pattern `0x3f3f3f3f` to match Metal's byte-valued `fillBuffer`.
 - **Copies and fills:** both are driver-internal operations (hk uses meta
-  compute kernels), so `copy.bw` measures the driver's copy path, not shader
-  codegen.
+  compute kernels), so `copy.bw` measures the driver's selected implementation,
+  including internal shader codegen.
 - **Empty submissions:** `submit.empty` measures what the API does with an
   empty command buffer. hk completes it in userspace without a kernel job
   (about 1 us round trip on the host). Use `compute.light` for the cheapest
