@@ -28,7 +28,7 @@ def load(path):
             continue
         if d.get("schema") != "gpubench-result/1" or d.get("lane") != "rt":
             continue
-        key = (d["test"], json.dumps(d.get("params", {}), sort_keys=True), d.get("mode"), d.get("depth"))
+        key = (d["test"], json.dumps(d.get("params", {}), sort_keys=True), d.get("mode"), d.get("depth"), d.get("tag", ""))
         out[key] = d
     return out
 
@@ -39,10 +39,10 @@ def med(d, m):
 
 
 def label(key):
-    test, params, mode, depth = key
+    test, params, mode, depth, tag = key
     p = json.loads(params)
     short = {k: v for k, v in p.items() if k in ("preset", "kind", "tris", "rays", "build", "trace")}
-    extra = ""
+    extra = f" [{tag}]" if tag else ""
     return f"{test} {' '.join(f'{k}={v}' for k, v in short.items())} d{depth}{extra}"
 
 
