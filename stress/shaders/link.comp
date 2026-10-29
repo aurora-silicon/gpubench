@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+// One node of a dependency graph: b[dst] = max(b[src0..src3]) + 1. The CPU computes the same
+// longest-path depth, so a node that ran before one of its dependencies reads a stale value.
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0, std430) buffer B { uint b[]; };
+layout(push_constant) uniform PC { uint dst; uint nsrc; uint s0; uint s1; uint s2; uint s3; } pc;
+void main()
+{
+   uint m = 0u;
+   if (pc.nsrc > 0u) m = max(m, b[pc.s0]);
+   if (pc.nsrc > 1u) m = max(m, b[pc.s1]);
+   if (pc.nsrc > 2u) m = max(m, b[pc.s2]);
+   if (pc.nsrc > 3u) m = max(m, b[pc.s3]);
+   b[pc.dst] = m + 1u;
+}

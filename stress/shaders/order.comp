@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+// Cross-queue order: a producer (role 0) and a consumer (role 1) take tickets from one counter
+// and the consumer copies the producer's marker. With a correct dependency the producer holds
+// tickets 0 and 1, the consumer 2 and 3, and the copied marker matches. `spin` makes the
+// producer slow so an ignored dependency shows. Role 2 only copies a marker written by the host.
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0, std430) buffer D { uint v[]; };
+layout(push_constant) uniform PC { uint base; uint role; uint spin; uint mark; } pc;
+void main()
+{
+   uint b = pc.base;
+   if (pc.role == 0u) {
+      uint x = pc.mark;
+      for (uint i = 0u; i < pc.spin; i++)
+         x = (x ^ (x >> 13u)) * 1664525u + 1013904223u;
+      v[b + 7u] = x;
+      v[b + 1u] = atomicAdd(v[b], 1u);
+      v[b + 5u] = pc.mark;
+      memoryBarrierBuffer();
+      v[b + 2u] = atomicAdd(v[b], 1u);
+   } else if (pc.role == 1u) {
+      v[b + 3u] = atomicAdd(v[b], 1u);
+      v[b + 6u] = v[b + 5u];
+      v[b + 4u] = atomicAdd(v[b], 1u);
+   } else {
+      v[b + 6u] = v[b + 5u];
+   }
+}
