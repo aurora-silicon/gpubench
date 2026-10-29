@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *test_names[RT_TEST_COUNT] = {"rt.scene", "rt.asbuild", "rt.rays"};
+static const char *test_names[RT_TEST_COUNT] = {"rt.scene", "rt.asbuild", "rt.rays", "rt.trav"};
 
 const char *rt_test_name(int t) { return t >= 0 && t < RT_TEST_COUNT ? test_names[t] : "?"; }
 
@@ -44,6 +44,11 @@ void rt_params_defaults(rt_params *p, int test)
    } else if (test == RT_TEST_RAYS) {
       strcpy(p->kind, "coherent");
       p->rays = 1u << 18;
+   } else if (test == RT_TEST_TRAV) {
+      strcpy(p->kind, "comb");
+      p->tris = 64;
+      p->rays = 1u << 18;
+      p->eps = 0.01f;
    }
 }
 
@@ -117,7 +122,7 @@ int rt_params_set(rt_params *p, const char *k, const char *v)
       else return -1;
       return 0;
    }
-   S("kind", kind) S("build", build) U("tris", tris) U("rays", rays) B("compact", compact)
+   S("kind", kind) S("build", build) U("tris", tris) U("rays", rays) B("compact", compact) F("eps", eps)
 #undef U
 #undef F
 #undef B
@@ -197,7 +202,7 @@ static void usage(const char *exe)
    fprintf(stderr,
       "%s: ray-tracing benchmarks (Solar Bay-style scene and RT micro-tests)\n\n"
       "Executor interface:\n"
-      "  --info | --list | --test rt.scene|rt.asbuild|rt.rays\n"
+      "  --info | --list | --test rt.scene|rt.asbuild|rt.rays|rt.trav\n"
       "  --depths 1,2,..  --mode queue  --param key=value (repeatable)\n"
       "  --warmup-ms N  --runs N  --run-ms N  --timestamps on|off  --device N\n"
       "Run controls: --frames N (fixed submissions per window), --png PATH, --shader-stats, --tag T,\n"
@@ -209,7 +214,8 @@ static void usage(const char *exe)
       "  tlas=static|refit|rebuild moving  reflective rpp bounces shadows tmax alpha\n"
       "  trace=query|pipeline camera=fixed|orbit seed\n"
       "rt.asbuild: kind=blas|refit|tlas build=fasttrace|fastbuild tris=N compact=0|1\n"
-      "rt.rays: kind=coherent|incoherent rays=N (+ scene geometry parameters)\n", exe);
+      "rt.rays: kind=coherent|incoherent rays=N (+ scene geometry parameters)\n"
+      "rt.trav: kind=miss|single|comb|grid|gap tris=N eps=E rays=N (synthetic geometry, common/trav.h)\n", exe);
 }
 
 static int parse_depths(rt_run *r, const char *v)
@@ -346,6 +352,14 @@ void rt_params_json(rt_json *j, const rt_params *p, int test)
       rt_json_str(j, "build", p->build);
       rt_json_int(j, "tris", p->tris);
       if (p->compact) rt_json_bool(j, "compact", 1);
+      rt_json_end(j);
+      return;
+   }
+   if (test == RT_TEST_TRAV) {
+      rt_json_str(j, "kind", p->kind);
+      if (strcmp(p->kind, "miss") && strcmp(p->kind, "single")) rt_json_int(j, "tris", p->tris);
+      if (!strcmp(p->kind, "gap")) rt_json_num(j, "eps", p->eps);
+      rt_json_int(j, "rays", p->rays);
       rt_json_end(j);
       return;
    }

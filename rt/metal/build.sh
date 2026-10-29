@@ -21,7 +21,7 @@ embed "$H/presets/presets.ini" rt_presets_ini
 xcrun -sdk macosx clang -std=gnu11 -O2 -arch arm64 -mmacosx-version-min="$MIN" -fobjc-arc \
    -Wall -Wno-unused-parameter -Wno-missing-field-initializers \
    -o "$OUT/gpubench-rt-mtl" "$H/metal/main.m" "$H/common/params.c" "$H/common/scene.c" "$H/common/json.c" \
-   "$H/common/util.c" "$H/common/result.c" "$G/rt_metal_src.c" "$G/rt_presets_ini.c" \
+   "$H/common/util.c" "$H/common/result.c" "$H/common/trav.c" "$G/rt_metal_src.c" "$G/rt_presets_ini.c" \
    -framework Metal -framework Foundation
 if [ "${RT_METALLIB:-0}" = 1 ]; then
    xcrun -sdk macosx metal -std=metal3.0 -O3 -mmacosx-version-min="$MIN" -c "$H/shaders/rt.metal" -o "$G/rt.air"

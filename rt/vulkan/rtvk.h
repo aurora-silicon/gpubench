@@ -7,6 +7,7 @@
 int rt_vk_scene(vk_ctx *c, const rt_params *p, const rt_run *r);
 int rt_vk_asbuild(vk_ctx *c, const rt_params *p, const rt_run *r);
 int rt_vk_rays(vk_ctx *c, const rt_params *p, const rt_run *r);
+int rt_vk_trav(vk_ctx *c, const rt_params *p, const rt_run *r);
 
 /* Static scene geometry for rt.rays (scene_vk.c). */
 struct scn;

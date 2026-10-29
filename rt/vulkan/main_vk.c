@@ -29,6 +29,7 @@ int main(int argc, char **argv)
    switch (r.test) {
    case RT_TEST_ASBUILD: rc = rt_vk_asbuild(&c, &p, &r); break;
    case RT_TEST_RAYS: rc = rt_vk_rays(&c, &p, &r); break;
+   case RT_TEST_TRAV: rc = rt_vk_trav(&c, &p, &r); break;
    default: rc = rt_vk_scene(&c, &p, &r); break;
    }
    vk_ctx_destroy(&c);

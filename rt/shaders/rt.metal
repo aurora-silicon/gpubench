@@ -419,3 +419,29 @@ kernel void rays(instance_acceleration_structure tlas [[buffer(0)]], device floa
       t = q.get_committed_distance();
    result[id] = t;
 }
+
+/* rt.trav (common/trav.h): GLSL twin shaders/trav.comp. */
+struct TravPC {
+   float x0, y0, dx, dy;
+   uint width, nrays;
+   float tmax;
+   uint pad;
+};
+
+kernel void trav(instance_acceleration_structure tlas [[buffer(0)]], device float *result [[buffer(1)]],
+                 constant TravPC &pc [[buffer(2)]], uint id [[thread_position_in_grid]])
+{
+   if (id >= pc.nrays) return;
+   float3 o = float3(pc.x0 + (float(id % pc.width) + 0.5f) * pc.dx, pc.y0 + (float(id / pc.width) + 0.5f) * pc.dy, -1.0f);
+   ray r(o, float3(0.0f, 0.0f, 1.0f), 0.0f, pc.tmax);
+   intersection_params params;
+   params.force_opacity(forced_opacity::opaque);
+   intersection_query<triangle_data, instancing> q;
+   q.reset(r, tlas, 0xFFu, params);
+   while (q.next()) {
+   }
+   float t = -1.0f;
+   if (q.get_committed_intersection_type() != intersection_type::none)
+      t = q.get_committed_distance();
+   result[id] = t;
+}

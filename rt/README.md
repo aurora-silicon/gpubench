@@ -63,6 +63,11 @@ the exact numbers.)
   `kind=incoherent` = random origins and directions. Depths 1..64 (ring of N submissions in
   flight). Metrics: `mrays_s` (wall clock), `mrays_s_gpu`, `us_per_submit`, `gpu_us`,
   `gpu_gap_us`.
+- `rt.trav`: the same dispatch against synthetic geometry that isolates one traversal step
+  (`common/trav.h`): `kind=miss` (rays miss the root box), `single` (one large triangle every ray
+  hits), `comb` (`tris` stacked triangles that every ray enters but misses), `grid` (`tris` small
+  triangles tiling a square, one hit per ray) and `gap` (`tris` planes whose boxes leave a gap of
+  `eps` beside the rays, which measures how tightly child boxes are encoded). Metrics as `rt.rays`.
 
 ## Executor interface
 
@@ -75,6 +80,7 @@ gpubench-rt-vk --info | --list
 gpubench-rt-vk --test rt.scene --param preset=medium [--param rpp=4 ...] [--depths 1,2,3]
 gpubench-rt-vk --test rt.asbuild --param kind=blas --param tris=262144
 gpubench-rt-vk --test rt.rays --param kind=incoherent --depths 1,2,4,8,16,32,64
+gpubench-rt-vk --test rt.trav --param kind=comb --param tris=64
    [--warmup-ms N] [--runs N] [--run-ms N] [--timestamps on|off] [--device N]
 ```
 

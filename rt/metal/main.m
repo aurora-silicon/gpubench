@@ -19,6 +19,7 @@
 #include "../common/params.h"
 #include "../common/result.h"
 #include "../common/scene.h"
+#include "../common/trav.h"
 #include "../common/util.h"
 
 extern const char rt_metal_src[];
@@ -922,6 +923,10 @@ typedef struct mmicro {
    mscene *scene;
    id<MTLComputePipelineState> pipe;
    struct { float eye[4], fwd[4], right[4], up[4]; uint32_t mode, nrays, seed, width; } pc;
+   /* trav */
+   rt_trav_rays tpc;
+   id<MTLAccelerationStructure> top;
+   size_t blas_bytes;
 } mmicro;
 
 static int record_build(void *user, uint32_t slot, uint64_t k, id<MTLCommandBuffer> cb, int timed)
@@ -951,6 +956,77 @@ static int record_rays(void *user, uint32_t slot, uint64_t k, id<MTLCommandBuffe
    [e setBytes:&m->pc length:sizeof(m->pc) atIndex:2];
    [e dispatchThreadgroups:MTLSizeMake((m->p->rays + 63) / 64, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
    [e endEncoding];
+   return 0;
+}
+
+static int record_trav(void *user, uint32_t slot, uint64_t k, id<MTLCommandBuffer> cb, int timed)
+{
+   (void)k; (void)timed;
+   mmicro *m = user;
+   id<MTLComputeCommandEncoder> e = [cb computeCommandEncoder];
+   [e setComputePipelineState:m->pipe];
+   [e setAccelerationStructure:m->top atBufferIndex:0];
+   [e useResource:m->blas usage:MTLResourceUsageRead];
+   [e setBuffer:m->out[slot] offset:0 atIndex:1];
+   [e setBytes:&m->tpc length:sizeof(m->tpc) atIndex:2];
+   [e dispatchThreadgroups:MTLSizeMake((m->tpc.nrays + 63) / 64, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+   [e endEncoding];
+   return 0;
+}
+
+/* Build `d` into a new structure and wait; *bytes gets its size. */
+static id<MTLAccelerationStructure> build_once(MTLAccelerationStructureDescriptor *d, size_t *bytes)
+{
+   MTLAccelerationStructureSizes bs = [g_dev accelerationStructureSizesWithDescriptor:d];
+   id<MTLAccelerationStructure> as = [g_dev newAccelerationStructureWithSize:bs.accelerationStructureSize];
+   id<MTLBuffer> scr = buf(bs.buildScratchBufferSize, 0, 0);
+   if (!as || !scr) return nil;
+   id<MTLCommandBuffer> cb = [g_queue commandBuffer];
+   id<MTLAccelerationStructureCommandEncoder> e = [cb accelerationStructureCommandEncoder];
+   [e buildAccelerationStructure:as descriptor:d scratchBuffer:scr scratchBufferOffset:0];
+   [e endEncoding];
+   [cb commit];
+   [cb waitUntilCompleted];
+   if (bytes) *bytes = bs.accelerationStructureSize;
+   return as;
+}
+
+static int setup_trav(mmicro *m, uint32_t depth)
+{
+   const rt_params *p = m->p;
+   float *pos;
+   if (rt_trav_geometry(p, &pos, &m->prims, &m->tpc)) return -1;
+   m->nverts = m->prims * 3;
+   m->vbuf = buf((size_t)m->nverts * 12, 1, 0);
+   memcpy(m->vbuf.contents, pos, (size_t)m->nverts * 12);
+   free(pos);
+   MTLAccelerationStructureTriangleGeometryDescriptor *g = [MTLAccelerationStructureTriangleGeometryDescriptor descriptor];
+   g.vertexBuffer = m->vbuf;
+   g.vertexStride = 12;
+   g.vertexFormat = MTLAttributeFormatFloat3;
+   g.triangleCount = m->prims;
+   g.opaque = YES;
+   MTLPrimitiveAccelerationStructureDescriptor *pd = [MTLPrimitiveAccelerationStructureDescriptor descriptor];
+   pd.geometryDescriptors = @[ g ];
+   m->blas = build_once(pd, &m->blas_bytes);
+   if (!m->blas) return -1;
+   m->instb = buf(sizeof(MTLAccelerationStructureInstanceDescriptor), 1, 0);
+   MTLAccelerationStructureInstanceDescriptor *in = m->instb.contents;
+   memset(in, 0, sizeof(*in));
+   for (int c = 0; c < 3; c++) in->transformationMatrix.columns[c].elements[c] = 1.0f;
+   in->mask = 0xff;
+   in->accelerationStructureIndex = 0;
+   MTLInstanceAccelerationStructureDescriptor *td = [MTLInstanceAccelerationStructureDescriptor descriptor];
+   td.instancedAccelerationStructures = @[ m->blas ];
+   td.instanceCount = 1;
+   td.instanceDescriptorBuffer = m->instb;
+   td.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeDefault;
+   m->top = build_once(td, NULL);
+   if (!m->top) return -1;
+   NSError *err = nil;
+   m->pipe = [g_dev newComputePipelineStateWithFunction:[g_lib newFunctionWithName:@"trav"] error:&err];
+   if (!m->pipe) return -1;
+   for (uint32_t i = 0; i < depth; i++) m->out[i] = buf((size_t)m->tpc.nrays * 4, 0, 0);
    return 0;
 }
 
@@ -1074,12 +1150,13 @@ static int micro_depth(const rt_params *p, const rt_run *r, int test, uint32_t d
    m.test = test;
    if (depth > MAXD) depth = MAXD;
    uint64_t t0 = rt_now_ns();
-   if ((test == RT_TEST_ASBUILD ? setup_asbuild(&m, depth) : setup_rays(&m, depth))) {
+   if ((test == RT_TEST_ASBUILD ? setup_asbuild(&m, depth)
+        : test == RT_TEST_TRAV ? setup_trav(&m, depth) : setup_rays(&m, depth))) {
       rt_result_fail(test, p, r->mode, depth, "setup failed");
       return -1;
    }
    mtl_stream st = {.depth = depth, .next = 1, .unretained = 1, .user = &m,
-                    .record = test == RT_TEST_ASBUILD ? record_build : record_rays};
+                    .record = test == RT_TEST_ASBUILD ? record_build : test == RT_TEST_TRAV ? record_trav : record_rays};
    mtl_stream_stats un = {0}, tm = {0};
    int rc = stream_phase(&st, 0, r->warmup_ms, 0, 0, NULL);
    if (!rc) rc = stream_phase(&st, r->runs, r->run_ms, r->frames, 0, &un);
@@ -1105,27 +1182,27 @@ static int micro_depth(const rt_params *p, const rt_run *r, int test, uint32_t d
    rt_json_str(&j, "status", "ok");
    rt_result_windows(&j, r);
    int tlas = test == RT_TEST_ASBUILD && m.tlas;
-   const char *rate_name = test == RT_TEST_RAYS ? "mrays_s" : tlas ? "minst_s" : "mtri_s";
-   rt_json_str(&j, "primary", test == RT_TEST_RAYS ? "mrays_s" : r->timestamps ? rate_name : "us_per_submit");
+   int rays = test == RT_TEST_RAYS || test == RT_TEST_TRAV;
+   const char *rate_name = rays ? "mrays_s" : tlas ? "minst_s" : "mtri_s";
+   rt_json_str(&j, "primary", rays ? "mrays_s" : r->timestamps ? rate_name : "us_per_submit");
    rt_json_obj(&j, "metrics");
    rt_vec ups = {0}, ups_t = {0}, rate = {0};
-   double work = test == RT_TEST_RAYS ? (double)p->rays : (double)m.prims;
+   double work = rays ? (double)p->rays : (double)m.prims;
    for (size_t i = 0; i < un.rate.n; i++) rt_vec_push(&ups, 1e6 / un.rate.v[i]);
    for (size_t i = 0; i < tm.rate.n; i++) rt_vec_push(&ups_t, 1e6 / tm.rate.v[i]);
-   if (test == RT_TEST_RAYS)
+   if (rays)
       for (size_t i = 0; i < un.rate.n; i++) rt_vec_push(&rate, un.rate.v[i] * work / 1e6);
    else
       for (size_t i = 0; i < tm.gpu_us.n; i++) if (tm.gpu_us.v[i] > 0) rt_vec_push(&rate, work / tm.gpu_us.v[i]);
    rt_metric(&j, "us_per_submit", "us", "lower", ups.v, ups.n, 1);
-   rt_metric(&j, rate_name, test == RT_TEST_RAYS ? "Mray/s" : tlas ? "Minst/s" : "Mtri/s", "higher", rate.v, rate.n,
-             test == RT_TEST_RAYS);
+   rt_metric(&j, rate_name, rays ? "Mray/s" : tlas ? "Minst/s" : "Mtri/s", "higher", rate.v, rate.n, rays);
    rt_metric(&j, "latency_us", "us", "lower", un.latency_us.v, un.latency_us.n, 0);
    rt_metric(&j, "record_cpu_us", "us", "lower", un.record_us.v, un.record_us.n, 0);
    rt_metric(&j, "submit_cpu_us", "us", "lower", un.submit_us.v, un.submit_us.n, 0);
    rt_metric(&j, "gpu_us", "us", "lower", tm.gpu_us.v, tm.gpu_us.n, 0);
    rt_metric(&j, "gpu_gap_us", "us", "lower", tm.gap_us.v, tm.gap_us.n, 0);
    rt_metric(&j, "us_per_submit_timed", "us", "lower", ups_t.v, ups_t.n, 1);
-   if (test == RT_TEST_RAYS && tm.gpu_us.n) {
+   if (rays && tm.gpu_us.n) {
       rt_vec gr = {0};
       for (size_t i = 0; i < tm.gpu_us.n; i++) if (tm.gpu_us.v[i] > 0) rt_vec_push(&gr, work / tm.gpu_us.v[i]);
       rt_metric(&j, "mrays_s_gpu", "Mray/s", "higher", gr.v, gr.n, 0);
@@ -1150,6 +1227,9 @@ static int micro_depth(const rt_params *p, const rt_run *r, int test, uint32_t d
       rt_json_int(&j, "build_scratch_bytes", (int64_t)m.sizes.buildScratchBufferSize);
       rt_json_int(&j, "update_scratch_bytes", (int64_t)m.sizes.refitScratchBufferSize);
       if (p->compact) rt_json_int(&j, "compacted_bytes", (int64_t)m.compacted);
+   } else if (test == RT_TEST_TRAV) {
+      rt_json_int(&j, "triangles", m.prims);
+      rt_json_int(&j, "blas_bytes", (int64_t)m.blas_bytes);
    } else {
       rt_json_int(&j, "scene_unique_tris", (int64_t)m.scene->sc.unique_tris);
       rt_json_int(&j, "scene_instanced_tris", (int64_t)m.scene->sc.instanced_tris);
@@ -1187,6 +1267,11 @@ static int run_micro(const rt_params *p, const rt_run *r, int test)
    }
    if (test == RT_TEST_RAYS && strcmp(p->kind, "coherent") && strcmp(p->kind, "incoherent")) {
       rt_result_fail(test, p, r->mode, r->depths[0], "kind must be coherent or incoherent");
+      return 0;
+   }
+   if (test == RT_TEST_TRAV && strcmp(p->kind, "miss") && strcmp(p->kind, "single") && strcmp(p->kind, "comb") &&
+       strcmp(p->kind, "grid") && strcmp(p->kind, "gap")) {
+      rt_result_fail(test, p, r->mode, r->depths[0], "kind must be miss, single, comb, grid or gap");
       return 0;
    }
    for (uint32_t d = 0; d < r->ndepths; d++)

@@ -11,7 +11,7 @@
 
 enum rt_as_mode { RT_AS_STATIC = 0, RT_AS_REFIT = 1, RT_AS_REBUILD = 2 };
 enum rt_trace_mode { RT_TRACE_QUERY = 0, RT_TRACE_PIPELINE = 1 };
-enum rt_test { RT_TEST_SCENE = 0, RT_TEST_ASBUILD = 1, RT_TEST_RAYS = 2, RT_TEST_COUNT };
+enum rt_test { RT_TEST_SCENE = 0, RT_TEST_ASBUILD = 1, RT_TEST_RAYS = 2, RT_TEST_TRAV = 3, RT_TEST_COUNT };
 
 typedef struct rt_params {
    char preset[64];
@@ -37,11 +37,14 @@ typedef struct rt_params {
    int camera_orbit;       /* 0: camera fixed at its frame-0 pose (default), 1: orbits with time */
    uint32_t seed;
    /* micro-benchmarks */
-   char kind[32];          /* asbuild: blas | refit | tlas; rays: coherent | incoherent */
+   char kind[32];          /* asbuild: blas | refit | tlas; rays: coherent | incoherent;
+                              trav: miss | single | comb | grid | gap (common/trav.h) */
    char build[16];         /* asbuild: fasttrace | fastbuild */
-   uint32_t tris;          /* asbuild: triangles (blas, refit) or instances (tlas) */
+   uint32_t tris;          /* asbuild: triangles (blas, refit) or instances (tlas); trav: triangles
+                              (comb, grid) or planes (gap) */
    int compact;            /* asbuild: build with compaction allowed and report the compacted size */
-   uint32_t rays;          /* rays: rays per submission */
+   uint32_t rays;          /* rays, trav: rays per submission */
+   float eps;              /* trav gap: gap between the rays and every triangle's box */
 } rt_params;
 
 typedef struct rt_run {

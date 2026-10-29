@@ -5,11 +5,14 @@
  *               `tris` instances), build=fasttrace|fastbuild.
  *   rt.rays:    one dispatch of `rays` closest-hit ray queries per submission against the static
  *               scene, kind=coherent|incoherent.
+ *   rt.trav:    the same against synthetic geometry that isolates one traversal step
+ *               (common/trav.h).
  * Both stream at depth N (ring of N submissions in flight, each slot with its own resources, no
  * dependencies between submissions). Timed pass: timestamps at the start and the end of each
  * command buffer. */
 #include "../common/result.h"
 #include "../common/scene.h"
+#include "../common/trav.h"
 #include "../common/util.h"
 #include "rtvk.h"
 #include "vkstream.h"
@@ -51,6 +54,11 @@ typedef struct micro {
    } pc;
    uint32_t nslots;
    uint64_t compacted;
+   /* trav */
+   rt_trav_rays tpc;
+   VkAccelerationStructureKHR tlas;
+   vk_buf tlas_buf;
+   VkDeviceSize blas_bytes;
 } micro;
 
 /* Compacted size of slot 0's structure (after the run, so it is a finished build). */
@@ -267,24 +275,25 @@ static VkResult record_rays(void *user, uint32_t slot, uint64_t k, VkCommandBuff
    return VK_SUCCESS;
 }
 
-static VkResult setup_rays(micro *m, uint32_t depth)
+/* The ray-query pipeline `shader` (push constants of `pc_bytes`) and a descriptor set per slot
+ * naming `tl` and the slot's result buffer. */
+static VkResult rays_pipeline(micro *m, uint32_t depth, const char *shader, uint32_t pc_bytes,
+                              VkAccelerationStructureKHR tl)
 {
    vk_ctx *c = m->c;
    const rt_params *p = m->p;
-   m->scene = rt_vk_static_scene(c, p);
-   if (!m->scene) return VK_ERROR_INITIALIZATION_FAILED;
    VkDescriptorSetLayoutBinding b[2] = {
       {0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL},
       {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}};
    VkDescriptorSetLayoutCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
                                           .bindingCount = 2, .pBindings = b};
    VKC(vkCreateDescriptorSetLayout(c->dev, &dci, NULL, &m->dsl));
-   VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(m->pc)};
+   VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, pc_bytes};
    VkPipelineLayoutCreateInfo pli = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
                                      .setLayoutCount = 1, .pSetLayouts = &m->dsl,
                                      .pushConstantRangeCount = 1, .pPushConstantRanges = &pr};
    VKC(vkCreatePipelineLayout(c->dev, &pli, NULL, &m->pl));
-   const vk_spv *x = vk_find_spv("rays.comp");
+   const vk_spv *x = vk_find_spv(shader);
    VkShaderModule mod;
    VKC(vk_shader(c, x->code, x->size, &mod));
    VkComputePipelineCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -292,7 +301,7 @@ static VkResult setup_rays(micro *m, uint32_t depth)
                                      .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                                                .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = mod, .pName = "main"},
                                      .layout = m->pl};
-   vk_marker("rays");
+   vk_marker(m->test == RT_TEST_TRAV ? "trav" : "rays");
    VKC(vkCreateComputePipelines(c->dev, VK_NULL_HANDLE, 1, &ci, NULL, &m->pipe));
    vk_marker("internal");
    vkDestroyShaderModule(c->dev, mod, NULL);
@@ -301,7 +310,6 @@ static VkResult setup_rays(micro *m, uint32_t depth)
    VkDescriptorPoolCreateInfo pci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
                                      .maxSets = depth, .poolSizeCount = 2, .pPoolSizes = ps};
    VKC(vkCreateDescriptorPool(c->dev, &pci, NULL, &m->dp));
-   VkAccelerationStructureKHR tl = rt_vk_static_scene_tlas(m->scene);
    m->nslots = depth;
    for (uint32_t i = 0; i < depth; i++) {
       VKC(vk_buf_create(c, &m->out[i], (VkDeviceSize)p->rays * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 0));
@@ -319,6 +327,16 @@ static VkResult setup_rays(micro *m, uint32_t depth)
           .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &bo}};
       vkUpdateDescriptorSets(c->dev, 2, w, 0, NULL);
    }
+   return VK_SUCCESS;
+}
+
+static VkResult setup_rays(micro *m, uint32_t depth)
+{
+   vk_ctx *c = m->c;
+   const rt_params *p = m->p;
+   m->scene = rt_vk_static_scene(c, p);
+   if (!m->scene) return VK_ERROR_INITIALIZATION_FAILED;
+   VKC(rays_pipeline(m, depth, "rays.comp", sizeof(m->pc), rt_vk_static_scene_tlas(m->scene)));
    const rt_scene *sc = rt_vk_static_scene_desc(m->scene);
    uint32_t width = 1024, h = (p->rays + width - 1) / width;
    rt_scene_camera(sc, 0, (float)width / (float)h, m->pc.eye, m->pc.fwd, m->pc.right, m->pc.up);
@@ -327,6 +345,97 @@ static VkResult setup_rays(micro *m, uint32_t depth)
    m->pc.nrays = p->rays;
    m->pc.width = width;
    return VK_SUCCESS;
+}
+
+/* ---- rt.trav ---- */
+
+static VkResult record_trav(void *user, uint32_t slot, uint64_t k, VkCommandBuffer cb, int timed)
+{
+   (void)k;
+   micro *m = user;
+   ts_begin(m, cb, slot, timed);
+   vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pipe);
+   vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, m->pl, 0, 1, &m->set[slot], 0, NULL);
+   vkCmdPushConstants(cb, m->pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(m->tpc), &m->tpc);
+   vkCmdDispatch(cb, (m->tpc.nrays + 63) / 64, 1, 1);
+   ts_end(m, cb, slot, timed);
+   return VK_SUCCESS;
+}
+
+/* Build `bi` (sizes queried for `count` primitives) into a new structure. */
+static VkResult build_once(micro *m, VkAccelerationStructureBuildGeometryInfoKHR *bi, uint32_t count, vk_buf *buf,
+                           VkAccelerationStructureKHR *as, VkDeviceSize *bytes)
+{
+   vk_ctx *c = m->c;
+   VkAccelerationStructureBuildSizesInfoKHR bs = {.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+   c->GetASBuildSizes(c->dev, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, bi, &count, &bs);
+   VKC(as_create(m, buf, as, bs.accelerationStructureSize, bi->type));
+   vk_buf scr;
+   VKC(vk_buf_create(c, &scr, bs.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0));
+   bi->dstAccelerationStructure = *as;
+   bi->scratchData.deviceAddress = scr.addr;
+   VkAccelerationStructureBuildRangeInfoKHR r1 = {.primitiveCount = count};
+   const VkAccelerationStructureBuildRangeInfoKHR *rp = &r1;
+   VkCommandBuffer cb;
+   VKC(vk_oneshot_begin(c, &cb));
+   c->CmdBuildAS(cb, 1, bi, &rp);
+   VKC(vk_oneshot_end(c, cb));
+   vk_buf_destroy(c, &scr);
+   if (bytes) *bytes = bs.accelerationStructureSize;
+   return VK_SUCCESS;
+}
+
+static VkResult setup_trav(micro *m, uint32_t depth)
+{
+   vk_ctx *c = m->c;
+   const rt_params *p = m->p;
+   float *pos;
+   if (rt_trav_geometry(p, &pos, &m->prims, &m->tpc)) return VK_ERROR_INITIALIZATION_FAILED;
+   const VkBufferUsageFlags geo = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                                  VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+   m->nverts = m->prims * 3;
+   VKC(vk_buf_create(c, &m->vbuf, (VkDeviceSize)m->nverts * 12, geo, 1));
+   memcpy(m->vbuf.map, pos, (size_t)m->nverts * 12);
+   free(pos);
+   VkAccelerationStructureGeometryKHR tri = {
+      .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+      .geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR,
+      .flags = VK_GEOMETRY_OPAQUE_BIT_KHR,
+      .geometry.triangles = {.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
+                             .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
+                             .vertexData.deviceAddress = m->vbuf.addr,
+                             .vertexStride = 12,
+                             .maxVertex = m->nverts - 1,
+                             .indexType = VK_INDEX_TYPE_NONE_KHR}};
+   VkAccelerationStructureBuildGeometryInfoKHR bi = {
+      .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+      .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+      .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+      .geometryCount = 1,
+      .pGeometries = &tri};
+   VKC(build_once(m, &bi, m->prims, &m->blas_buf, &m->blas, &m->blas_bytes));
+   VkAccelerationStructureDeviceAddressInfoKHR ai = {
+      .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR, .accelerationStructure = m->blas};
+   VKC(vk_buf_create(c, &m->inst, sizeof(VkAccelerationStructureInstanceKHR),
+                     VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, 1));
+   VkAccelerationStructureInstanceKHR *in = m->inst.map;
+   memset(in, 0, sizeof(*in));
+   in->transform.matrix[0][0] = in->transform.matrix[1][1] = in->transform.matrix[2][2] = 1.0f;
+   in->mask = 0xff;
+   in->accelerationStructureReference = c->GetASAddress(c->dev, &ai);
+   VkAccelerationStructureGeometryKHR ig = {
+      .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+      .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
+      .geometry.instances = {.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
+                             .data.deviceAddress = m->inst.addr}};
+   VkAccelerationStructureBuildGeometryInfoKHR ti = {
+      .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+      .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
+      .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+      .geometryCount = 1,
+      .pGeometries = &ig};
+   VKC(build_once(m, &ti, 1, &m->tlas_buf, &m->tlas, NULL));
+   return rays_pipeline(m, depth, "trav.comp", sizeof(m->tpc), m->tlas);
 }
 
 static void teardown(micro *m)
@@ -341,6 +450,8 @@ static void teardown(micro *m)
    }
    if (m->blas) c->DestroyAS(c->dev, m->blas, NULL);
    vk_buf_destroy(c, &m->blas_buf);
+   if (m->tlas) c->DestroyAS(c->dev, m->tlas, NULL);
+   vk_buf_destroy(c, &m->tlas_buf);
    vk_buf_destroy(c, &m->vbuf);
    vk_buf_destroy(c, &m->ibuf);
    vk_buf_destroy(c, &m->inst);
@@ -365,7 +476,8 @@ static int run_one(vk_ctx *c, const rt_params *p, const rt_run *r, int test, uin
    m.ts_ok = c->props.limits.timestampComputeAndGraphics && c->props.limits.timestampPeriod > 0;
    m.ts_ns = c->props.limits.timestampPeriod;
    uint64_t t0 = rt_now_ns();
-   VkResult vr = test == RT_TEST_ASBUILD ? setup_asbuild(&m, depth) : setup_rays(&m, depth);
+   VkResult vr = test == RT_TEST_ASBUILD ? setup_asbuild(&m, depth)
+               : test == RT_TEST_TRAV ? setup_trav(&m, depth) : setup_rays(&m, depth);
    if (vr == VK_SUCCESS) {
       VkQueryPoolCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
                                   .queryType = VK_QUERY_TYPE_TIMESTAMP, .queryCount = depth * 2};
@@ -380,7 +492,8 @@ static int run_one(vk_ctx *c, const rt_params *p, const rt_run *r, int test, uin
       return -1;
    }
    vk_stream st;
-   vk_stream_ops ops = {&m, test == RT_TEST_ASBUILD ? record_build : record_rays, complete};
+   vk_stream_ops ops = {&m, test == RT_TEST_ASBUILD ? record_build : test == RT_TEST_TRAV ? record_trav : record_rays,
+                        complete};
    vr = vk_stream_init(&st, c, depth, ops);
    vk_stream_stats un = {0}, tm = {0};
    if (vr == VK_SUCCESS) vr = vk_stream_phase(&st, 0, r->warmup_ms, 0, 0, NULL);
@@ -403,27 +516,27 @@ static int run_one(vk_ctx *c, const rt_params *p, const rt_run *r, int test, uin
    rt_json_str(&j, "status", "ok");
    rt_result_windows(&j, r);
    int tlas = test == RT_TEST_ASBUILD && !strcmp(p->kind, "tlas");
-   const char *rate_name = test == RT_TEST_RAYS ? "mrays_s" : tlas ? "minst_s" : "mtri_s";
-   rt_json_str(&j, "primary", test == RT_TEST_RAYS ? "mrays_s" : (m.ts_ok && r->timestamps) ? rate_name : "us_per_submit");
+   int rays = test == RT_TEST_RAYS || test == RT_TEST_TRAV;
+   const char *rate_name = rays ? "mrays_s" : tlas ? "minst_s" : "mtri_s";
+   rt_json_str(&j, "primary", rays ? "mrays_s" : (m.ts_ok && r->timestamps) ? rate_name : "us_per_submit");
    rt_json_obj(&j, "metrics");
    rt_vec ups = {0}, ups_t = {0}, rate = {0};
-   double work = test == RT_TEST_RAYS ? (double)p->rays : (double)m.prims;
+   double work = rays ? (double)p->rays : (double)m.prims;
    for (size_t i = 0; i < un.rate.n; i++) rt_vec_push(&ups, 1e6 / un.rate.v[i]);
    for (size_t i = 0; i < tm.rate.n; i++) rt_vec_push(&ups_t, 1e6 / tm.rate.v[i]);
-   if (test == RT_TEST_RAYS)
+   if (rays)
       for (size_t i = 0; i < un.rate.n; i++) rt_vec_push(&rate, un.rate.v[i] * work / 1e6);
    else
       for (size_t i = 0; i < m.gpu_us.n; i++) if (m.gpu_us.v[i] > 0) rt_vec_push(&rate, work / m.gpu_us.v[i]);
    rt_metric(&j, "us_per_submit", "us", "lower", ups.v, ups.n, 1);
-   rt_metric(&j, rate_name, test == RT_TEST_RAYS ? "Mray/s" : tlas ? "Minst/s" : "Mtri/s", "higher", rate.v, rate.n,
-             test == RT_TEST_RAYS);
+   rt_metric(&j, rate_name, rays ? "Mray/s" : tlas ? "Minst/s" : "Mtri/s", "higher", rate.v, rate.n, rays);
    rt_metric(&j, "latency_us", "us", "lower", un.latency_us.v, un.latency_us.n, 0);
    rt_metric(&j, "record_cpu_us", "us", "lower", un.record_us.v, un.record_us.n, 0);
    rt_metric(&j, "submit_cpu_us", "us", "lower", un.submit_us.v, un.submit_us.n, 0);
    rt_metric(&j, "gpu_us", "us", "lower", m.gpu_us.v, m.gpu_us.n, 0);
    rt_metric(&j, "gpu_gap_us", "us", "lower", m.gap_us.v, m.gap_us.n, 0);
    rt_metric(&j, "us_per_submit_timed", "us", "lower", ups_t.v, ups_t.n, 1);
-   if (test == RT_TEST_RAYS && m.gpu_us.n) {
+   if (rays && m.gpu_us.n) {
       rt_vec gr = {0};
       for (size_t i = 0; i < m.gpu_us.n; i++) if (m.gpu_us.v[i] > 0) rt_vec_push(&gr, work / m.gpu_us.v[i]);
       rt_metric(&j, "mrays_s_gpu", "Mray/s", "higher", gr.v, gr.n, 0);
@@ -448,6 +561,9 @@ static int run_one(vk_ctx *c, const rt_params *p, const rt_run *r, int test, uin
       rt_json_int(&j, "build_scratch_bytes", (int64_t)m.sizes.buildScratchSize);
       rt_json_int(&j, "update_scratch_bytes", (int64_t)m.sizes.updateScratchSize);
       if (p->compact) rt_json_int(&j, "compacted_bytes", (int64_t)m.compacted);
+   } else if (test == RT_TEST_TRAV) {
+      rt_json_int(&j, "triangles", m.prims);
+      rt_json_int(&j, "blas_bytes", (int64_t)m.blas_bytes);
    } else {
       const rt_scene *sc = rt_vk_static_scene_desc(m.scene);
       rt_json_int(&j, "scene_unique_tris", (int64_t)sc->unique_tris);
@@ -457,7 +573,7 @@ static int run_one(vk_ctx *c, const rt_params *p, const rt_run *r, int test, uin
    }
    if (r->shader_stats && m.pipe) {
       rt_json_obj(&j, "shader_stats");
-      vk_pipeline_stats_json(c, m.pipe, &j, "rays");
+      vk_pipeline_stats_json(c, m.pipe, &j, test == RT_TEST_TRAV ? "trav" : "rays");
       rt_json_end(&j);
    }
    rt_json_end(&j);
@@ -489,6 +605,11 @@ static int run_test(vk_ctx *c, const rt_params *p, const rt_run *r, int test)
       rt_result_fail(test, p, r->mode, r->depths[0], "kind must be coherent or incoherent");
       return 0;
    }
+   if (test == RT_TEST_TRAV && strcmp(p->kind, "miss") && strcmp(p->kind, "single") && strcmp(p->kind, "comb") &&
+       strcmp(p->kind, "grid") && strcmp(p->kind, "gap")) {
+      rt_result_fail(test, p, r->mode, r->depths[0], "kind must be miss, single, comb, grid or gap");
+      return 0;
+   }
    for (uint32_t d = 0; d < r->ndepths; d++)
       if (run_one(c, p, r, test, r->depths[d])) break;
    return 0;
@@ -496,3 +617,4 @@ static int run_test(vk_ctx *c, const rt_params *p, const rt_run *r, int test)
 
 int rt_vk_asbuild(vk_ctx *c, const rt_params *p, const rt_run *r) { return run_test(c, p, r, RT_TEST_ASBUILD); }
 int rt_vk_rays(vk_ctx *c, const rt_params *p, const rt_run *r) { return run_test(c, p, r, RT_TEST_RAYS); }
+int rt_vk_trav(vk_ctx *c, const rt_params *p, const rt_run *r) { return run_test(c, p, r, RT_TEST_TRAV); }

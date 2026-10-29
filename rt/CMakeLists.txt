@@ -21,7 +21,7 @@ endif()
 set(RT_SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 set(RT_GEN ${CMAKE_CURRENT_BINARY_DIR}/rtgen)
 file(MAKE_DIRECTORY ${RT_GEN})
-set(RT_SHADERS deform.comp gbuffer.vert gbuffer.frag rtreflect.comp composite.comp rays.comp
+set(RT_SHADERS deform.comp gbuffer.vert gbuffer.frag rtreflect.comp composite.comp rays.comp trav.comp
     rtpipe.rgen rtpipe.rchit rtpipe.rahit rtpipe.rmiss rtpipe_shadow.rmiss rtstub.comp)
 file(GLOB RT_SHADER_INCLUDES ${RT_SHADER_DIR}/*.glsl)
 set(RT_SPV "")
@@ -66,7 +66,7 @@ if(WAYLAND_FOUND AND WAYLAND_SCANNER AND WL_PROTOCOLS)
 endif()
 
 add_executable(gpubench-rt-vk
-  common/params.c common/scene.c common/json.c common/util.c common/result.c
+  common/params.c common/scene.c common/json.c common/util.c common/result.c common/trav.c
   vulkan/main_vk.c vulkan/vkutil.c vulkan/vkstream.c vulkan/scene_vk.c vulkan/micro_vk.c vulkan/vtrace_vk.c
   ${RT_GEN}/spv_embed.c ${RT_GEN}/presets_ini.c ${RT_WIN_SRC})
 set_target_properties(gpubench-rt-vk PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON)
