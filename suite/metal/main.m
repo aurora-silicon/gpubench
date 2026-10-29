@@ -860,6 +860,61 @@ copy_encode(id state, id<MTLCommandBuffer> cb, uint64_t k)
 static const struct mtest t_copy_bw = {.name = "copy.bw", .known = kind_params, .depths = {1, 4}, .nd = 2,
                                        .setup = copy_setup, .encode = copy_encode, .derive = copy_derive};
 
+/* ---- diag.fill: copy.bw kind=fill with a variable size and an optional pre-touch ---- */
+static const char *const diag_fill_params[] = {"size_mib", "init", "storage", NULL};
+
+static uint64_t
+diag_fill_bytes(const struct gb_opts *o)
+{
+   return (uint64_t)gb_param_int(o, "size_mib", 64) << 20;
+}
+
+static id
+diag_fill_setup(const struct gb_opts *o, char *e, size_t n)
+{
+   long mib = gb_param_int(o, "size_mib", 64), init = gb_param_int(o, "init", 0);
+   const char *storage = gb_param(o, "storage", "private");
+   bool shared = !strcmp(storage, "shared");
+   if (mib < 1 || mib > 1024 || (init != 0 && init != 1) || (!shared && strcmp(storage, "private"))) {
+      snprintf(e, n, "size_mib 1..1024, init 0|1, storage private|shared");
+      return nil;
+   }
+   GBState *st = [GBState new];
+   st.kind = K_FILLBUF;
+   st.n = (uint32_t)mib;
+   st.b = buf((size_t)mib << 20, shared);
+   if (init) {
+      /* One fill before timing: later fills overwrite pages the GPU has already written. */
+      id<MTLCommandQueue> q = [g_dev newCommandQueue];
+      id<MTLCommandBuffer> cb = [q commandBuffer];
+      id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
+      [b fillBuffer:st.b range:NSMakeRange(0, (NSUInteger)mib << 20) value:0];
+      [b endEncoding];
+      [cb commit];
+      [cb waitUntilCompleted];
+   }
+   return st;
+}
+
+static void
+diag_fill_encode(id state, id<MTLCommandBuffer> cb, uint64_t k)
+{
+   GBState *s = state;
+   id<MTLBlitCommandEncoder> e = [cb blitCommandEncoder];
+   [e fillBuffer:s.b range:NSMakeRange(0, (NSUInteger)s.n << 20) value:0x3f];
+   [e endEncoding];
+}
+
+static void
+diag_fill_derive(const struct gb_opts *o, struct gb_result *r, const struct gb_samples *us)
+{
+   gb_derive_rate(r, "gbps", "GB/s", us, diag_fill_bytes(o) / 1e9 * 1e6);
+}
+
+static const struct mtest t_diag_fill = {.name = "diag.fill", .known = diag_fill_params, .depths = {1, 4},
+                                         .nd = 2, .setup = diag_fill_setup, .encode = diag_fill_encode,
+                                         .derive = diag_fill_derive};
+
 /* ---- query ---- */
 static int
 run_query(const struct gb_opts *o)
@@ -1501,6 +1556,7 @@ static int st_rl(const struct gb_opts *o) { return run_stream_test(o, &t_render_
 static int st_rh(const struct gb_opts *o) { return run_stream_test(o, &t_render_heavy); }
 static int st_tvb(const struct gb_opts *o) { return run_stream_test(o, &t_render_tvb); }
 static int st_copy(const struct gb_opts *o) { return run_stream_test(o, &t_copy_bw); }
+static int st_diag_fill(const struct gb_opts *o) { return run_stream_test(o, &t_diag_fill); }
 static int st_mem_buffer(const struct gb_opts *o) { return run_mem(o, false); }
 static int st_mem_image(const struct gb_opts *o) { return run_mem(o, true); }
 
@@ -1518,6 +1574,7 @@ static const struct {
    {"mem.buffer", st_mem_buffer},
    {"mem.image", st_mem_image},
    {"copy.bw", st_copy},
+   {"diag.fill", st_diag_fill},
    {"concurrent.cr", run_concurrent},
    {"query", run_query},
    {"idle.wake", run_idle},

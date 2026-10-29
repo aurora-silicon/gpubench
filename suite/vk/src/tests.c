@@ -454,6 +454,70 @@ static const struct gb_stream_test t_copy_bw = {
    .derive = copy_derive,
 };
 
+/* ======================= diag.fill ======================= */
+/* copy.bw kind=fill with a variable size and an optional pre-touch, matching the Metal executor. */
+
+static const char *const diag_fill_params[] = {"size_mib", "init", "storage", NULL};
+
+struct diag_fill_state {
+   struct gb_buf dst;
+   VkDeviceSize bytes;
+};
+
+static void *
+diag_fill_setup(struct gb_vk *vk, const struct gb_opts *o, char *err, size_t n)
+{
+   long mib = gb_param_int(o, "size_mib", 64), init = gb_param_int(o, "init", 0);
+   const char *storage = gb_param(o, "storage", "private");
+   bool shared = !strcmp(storage, "shared");
+   if (mib < 1 || mib > 1024 || (init != 0 && init != 1) || (!shared && strcmp(storage, "private"))) {
+      set_err(err, n, "size_mib 1..1024, init 0|1, storage private|shared");
+      return NULL;
+   }
+   struct diag_fill_state *st = calloc(1, sizeof(*st));
+   st->bytes = (VkDeviceSize)mib << 20;
+   gb_buf_create(vk, st->bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, shared, &st->dst);
+   if (init) {
+      /* One fill before timing: later fills overwrite pages the GPU has already written. */
+      VkCommandBuffer cb = gb_oneshot_begin(vk);
+      vkCmdFillBuffer(cb, st->dst.buf, 0, st->bytes, 0);
+      gb_oneshot_end(vk, cb);
+   }
+   return st;
+}
+
+static void
+diag_fill_teardown(struct gb_vk *vk, void *p)
+{
+   struct diag_fill_state *st = p;
+   gb_buf_destroy(vk, &st->dst);
+   free(st);
+}
+
+static void
+diag_fill_record(void *p, VkCommandBuffer cb, uint64_t k)
+{
+   (void)k;
+   struct diag_fill_state *st = p;
+   vkCmdFillBuffer(cb, st->dst.buf, 0, st->bytes, 0x3f3f3f3fu);
+}
+
+static void
+diag_fill_derive(const struct gb_opts *o, struct gb_result *r, const struct gb_samples *us)
+{
+   gb_derive_rate(r, "gbps", "GB/s", us, ((double)gb_param_int(o, "size_mib", 64) * (1 << 20)) / 1e9 * 1e6);
+}
+
+static const struct gb_stream_test t_diag_fill = {
+   .name = "diag.fill",
+   .known_params = diag_fill_params,
+   .default_depths = {1, 4}, .ndefault = 2,
+   .setup = diag_fill_setup,
+   .teardown = diag_fill_teardown,
+   .record = diag_fill_record,
+   .derive = diag_fill_derive,
+};
+
 /* ======================= query ======================= */
 
 
@@ -1227,6 +1291,7 @@ static int st_render_light(const struct gb_opts *o) { return gb_run_stream_test(
 static int st_render_heavy(const struct gb_opts *o) { return gb_run_stream_test(o, &t_render_heavy); }
 static int st_render_tvb(const struct gb_opts *o) { return gb_run_stream_test(o, &t_render_tvb); }
 static int st_copy_bw(const struct gb_opts *o) { return gb_run_stream_test(o, &t_copy_bw); }
+static int st_diag_fill(const struct gb_opts *o) { return gb_run_stream_test(o, &t_diag_fill); }
 
 const struct gb_test gb_tests[] = {
    {"submit.empty", st_submit_empty},
@@ -1239,6 +1304,7 @@ const struct gb_test gb_tests[] = {
    {"mem.buffer", run_mem_buffer},
    {"mem.image", run_mem_image},
    {"copy.bw", st_copy_bw},
+   {"diag.fill", st_diag_fill},
    {"concurrent.cr", run_concurrent},
    {"query", run_query},
    {"idle.wake", run_idle},

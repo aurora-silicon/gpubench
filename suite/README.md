@@ -25,6 +25,7 @@ path: that is what the suite measures.
 | `mem.buffer` | create+allocate+bind, map, touch every 16 KiB page, unmap, free; plus a full alloc -> GPU fill -> wait -> free cycle; 4 KiB .. 64 MiB | GEM/VM bind, mmap, page-fault and free path |
 | `mem.image` | same for 2D RGBA8 images 256^2 .. 4096^2, cycle = alloc -> clear pass -> wait -> free | image allocation, layout and first-use path |
 | `copy.bw` | 64 MiB `kind=buf2buf`, `buf2img` (4096x4096 RGBA8) or `fill` | copy/blit bandwidth |
+| `diag.fill` | `vkCmdFillBuffer` / `fillBuffer` of `size_mib` (1..1024, default 64) MiB; `init=1` fills the buffer once before timing, `storage=private\|shared` picks device-local or host-visible memory | fill bandwidth against first-touch page cost and memory placement (diagnostic, not in the plan) |
 | `concurrent.cr` | `mode=queues`: compute.heavy and render.heavy on two queues, alone and together; `mode=interleave`: compute.light and render.light alternating on one queue | compute/render overlap; render<->compute switch cost |
 | `idle.wake` | one compute.light submission after `gap_ms` (2, 20, 200) of GPU idle, then one immediately after | GPU power-down / wake-up path in firmware and kernel (`wake_cost_us`) |
 | `query` | compute.light with start/end timestamps (`kind=timestamp`) or render.light with an occlusion query (`kind=occlusion`), plus result readback | query/timestamp overhead and readback |
