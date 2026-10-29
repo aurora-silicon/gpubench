@@ -28,7 +28,7 @@ path: that is what the suite measures.
 | `diag.fill` | `vkCmdFillBuffer` / `fillBuffer` of `size_mib` (1..1024, default 64) MiB; `init=1` fills the buffer once before timing, `storage=private\|shared` picks device-local or host-visible memory | fill bandwidth against first-touch page cost and memory placement (diagnostic, not in the plan) |
 | `concurrent.cr` | `mode=queues`: compute.heavy and render.heavy on two queues, alone and together; `mode=interleave`: compute.light and render.light alternating on one queue | compute/render overlap; render<->compute switch cost |
 | `idle.wake` | one compute.light submission after `gap_ms` (2, 20, 200) of GPU idle, then one immediately after | GPU power-down / wake-up path in firmware and kernel (`wake_cost_us`) |
-| `query` | compute.light with start/end timestamps (`kind=timestamp`) or render.light with an occlusion query (`kind=occlusion`), plus result readback | query/timestamp overhead and readback |
+| `query` | compute.light with start/end timestamps (`kind=timestamp`) or render.light with an occlusion query (`kind=occlusion`), plus result readback; base and query windows alternate in ABBA order, each after its own warm-up | query/timestamp overhead and readback |
 
 Present/swapchain is not covered yet (headless first).
 
@@ -68,8 +68,13 @@ references, encode, commit), because Metal has no reusable command buffers.
   250) each, measured on a continuous stream (no drain between windows).
   Completions are attributed to the window in which the CPU observes them.
 - **Wall-clock metrics** (untimed pass: no timestamps at all):
-  - `us_per_submit`: window length / completions in the window. The primary
-    metric of every submission test. Its inverse is the submission rate.
+  - `us_per_submit`: the time from the window's first to its last
+    completion, divided by the completions after the first. A window with a
+    single completion uses window length / 1. The primary metric of every
+    submission test. Its inverse is the submission rate. (Records made before
+    this method divided the window length by its whole number of completions,
+    which quantizes slow rows; compare only records made with the same
+    method.)
   - `latency_us`: per submission, from just before `vkQueueSubmit`/`commit`
     to the moment the CPU wait for it returns. At depth 1 this is the round
     trip. At depth N it includes queueing (about N x `us_per_submit`).
