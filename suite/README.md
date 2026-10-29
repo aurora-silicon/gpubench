@@ -20,7 +20,7 @@ path: that is what the suite measures.
 | `compute.heavy` | `kind=alu`: 1024 x 256 threads, 8 FMA chains x 512 iterations (2.1 GFLOP); `kind=bw`: 64 MiB read + 64 MiB write (float4) | scheduling and GPU feed under load; throughput vs depth |
 | `render.light` | 64x64 RGBA8 pass, load-op clear, `kind=tri` 1 triangle or `kind=clear` none | render-pass / tiler / firmware render path, render pairs |
 | `render.heavy` | `kind=fill`: 16 blended full-screen layers at 720p/1080p/2160p; `kind=geom`: 262144 small opaque triangles at 1080p | fill and geometry throughput, render scheduling at depth |
-| `render.tvb` | 1080p pass with N long thin triangles (8K/32K/128K) that cross many tiles | tiler memory (TVB) overflow, partial renders, heap growth; cold first-pass cost |
+| `render.tvb` | 1080p pass with N long thin triangles (8K/32K/128K) that cross many tiles; `dim=N` renders into an N x N target instead (Vulkan) | tiler memory (TVB) overflow, partial renders, heap growth; cold first-pass cost |
 | `sync.signal` | `kind=host`: CPU signals a semaphore a parked submission waits on; `kind=queue`: two queues ping-pong a semaphore (`sema=timeline` or `binary`) | wait-before-signal path, cross-queue dependency latency |
 | `mem.buffer` | create+allocate+bind, map, touch every 16 KiB page, unmap, free; plus a full alloc -> GPU fill -> wait -> free cycle; 4 KiB .. 64 MiB | GEM/VM bind, mmap, page-fault and free path |
 | `mem.image` | same for 2D RGBA8 images 256^2 .. 4096^2, cycle = alloc -> clear pass -> wait -> free | image allocation, layout and first-use path |

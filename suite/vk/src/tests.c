@@ -342,6 +342,14 @@ tvb_setup(struct gb_vk *vk, const struct gb_opts *o, char *err, size_t n)
       set_err(err, n, "tris out of range");
       return NULL;
    }
+   /* dim=N renders into an N x N target instead (tiling load scales with tris, fragment work stays small). */
+   long dim = gb_param_int(o, "dim", 0);
+   if (dim < 0 || dim > 4096) {
+      set_err(err, n, "dim out of range");
+      return NULL;
+   }
+   if (dim)
+      return r_setup_kind(vk, R_TVB, (uint32_t)dim, (uint32_t)dim, (uint32_t)tris);
    return r_setup_kind(vk, R_TVB, GB_TVB_W, GB_TVB_H, (uint32_t)tris);
 }
 
@@ -351,7 +359,7 @@ tvb_derive(const struct gb_opts *o, struct gb_result *r, const struct gb_samples
    gb_derive_rate(r, "mtri_s", "Mtri/s", us, gb_param_int(o, "tris", 262144) / 1e6 * 1e6);
 }
 
-static const char *const tvb_params[] = {"tris", NULL};
+static const char *const tvb_params[] = {"tris", "dim", NULL};
 
 static const struct gb_stream_test t_render_tvb = {
    .name = "render.tvb",
