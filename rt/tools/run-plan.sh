@@ -4,7 +4,7 @@
 # Runs every "<chunk> rt <test> <args>" line of <plan> whose chunk matches <chunk-regex>
 # (default: every chunk), appending result lines to <out.jsonl> and executor stderr to
 # <out.jsonl>.log. POSIX sh only, so it runs on a stock macOS install.
-# RT_LOCK=<file>: wrap each chunk in `flock <file>` (Neo Linux: /var/tmp/neo-gpu.lock).
+# RT_LOCK=<file>: wrap each chunk in `flock <file>` (for example /var/tmp/gpu.lock).
 # RT_MEMMAX=<size>: run each chunk in a systemd user scope with MemoryMax (Linux).
 # RT_COOL=<celsius>: before each chunk (inside the lock), wait until every thermal zone reads below
 #   this, at most RT_COOL_MAX seconds (default 120); the wait is logged (Linux sysfs only).

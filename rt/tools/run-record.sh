@@ -5,7 +5,7 @@
 # record directory (records/SCHEMA.md):
 #   <records-root>/<YYYYMMDD>-<id>/meta.json, results.jsonl, log.txt
 # <id> is "<uname -r>-<mesa short sha>" on Linux and the macOS build on macOS.
-# POSIX sh; works on Linux (Neo: set RT_LOCK=/var/tmp/neo-gpu.lock RT_MEMMAX=5G) and stock macOS.
+# POSIX sh; works on Linux (on a shared test device, set for example RT_LOCK=/var/tmp/gpu.lock RT_MEMMAX=5G) and stock macOS.
 set -u
 EXE=$1; DEV=$2; ROOT=$3; RE=${4:-.}
 H=$(cd "$(dirname "$0")" && pwd)

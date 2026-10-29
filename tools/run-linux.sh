@@ -5,7 +5,7 @@
 #   run-linux.sh [--device NAME] [--chunks a,b] [--tests t1,t2] [--out-root DIR]
 #                [--bin DIR] [--lock FILE] [--note TEXT]
 #
-# --lock wraps every chunk in `flock FILE` (Neo: /var/tmp/neo-gpu.lock), so
+# --lock wraps every chunk in `flock FILE` (for example /var/tmp/gpu.lock), so
 # the lock is held for one chunk at a time. After every chunk the GPU kernel
 # log and the desktop are checked; a GPU fault stops the run.
 # The record goes to <out-root>/<device>/linux/<date>-<kernel>-<mesa>/.
