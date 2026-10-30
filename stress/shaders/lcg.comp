@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+// Long ALU work with a checkable result: `iters` steps of a 32-bit LCG per invocation.
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) buffer O { uint o[]; };
+layout(push_constant) uniform PC { uint iters; uint seed; } pc;
+void main()
+{
+   uint gid = gl_GlobalInvocationID.x;
+   uint x = pc.seed ^ (gid * 2654435761u);
+   for (uint i = 0u; i < pc.iters; i++)
+      x = (x ^ (x >> 13u)) * 1664525u + 1013904223u;
+   o[gid] = x;
+}

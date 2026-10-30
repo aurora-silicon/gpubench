@@ -1,6 +1,6 @@
 # gpubench
 
-Vulkan and Metal benchmarks for GPU driver development. The standard suite measures submission, scheduling, synchronization, memory management, and GPU execution. The ray-tracing extension adds procedural scenes, acceleration-structure builds, and ray-query workloads.
+Vulkan and Metal benchmarks for GPU driver development. The standard suite measures submission, scheduling, synchronization, memory management, and GPU execution. The ray-tracing extension adds procedural scenes, acceleration-structure builds, and ray-query workloads. The stress suite checks driver robustness with pass/fail tests.
 
 Both executors use matching workloads, dimensions, queue depths, warm-up periods, and timing windows. Untimed throughput and GPU-timestamp measurements are separate passes. See [the timing method](suite/README.md) and [comparison limits](suite/FAIRNESS.md).
 
@@ -36,6 +36,8 @@ cmake --build build -j4
 tools/run-linux.sh --device my-device --chunks core-a,core-b,multi,feat
 ```
 
+The build also produces `build/bin/gpubench-stress-vk`, the stress suite: pass/fail driver stress tests that check every result and can run on a desktop in about five minutes (`gpubench-stress-vk --kernel-log`). See [stress/](stress/README.md).
+
 Set `VK_DRIVER_FILES` to select a specific driver. The Linux runner accepts `--lock FILE` to coordinate GPU use with other jobs. Use `--chunks core-a` for the submission tests, or omit `--chunks` for the complete standard and ray-tracing plans.
 
 Set `GB_COOLDOWN_CMD` to a script to run before each chunk, for example one that waits for the GPU to cool. It gets the record directory and the chunk name as arguments. It is skipped after a chunk that recorded no ok rows, such as ray-tracing chunks on a driver without ray tracing.
@@ -46,6 +48,7 @@ For a short functional run, set `GB_WARMUP_MS=20 GB_RUNS=1 GB_RUN_MS=40 GB_TIMED
 
 - [suite/](suite/README.md): standard compute, render, synchronization, and memory benchmarks.
 - [rt/](rt/README.md): ray-tracing scenes and microbenchmarks.
+- [stress/](stress/README.md): driver stress tests with pass/fail verdicts (Linux, Vulkan).
 - [records/](records/README.md): per-device records and JSON schema.
 - `tools/`: portable builders, runners, and record comparison. `tools/performance-gate.py` is the strict full-record gate: a Linux record passes only when every comparable row beats the Neo macOS reference ([details](tools/performance-gate.md)).
 

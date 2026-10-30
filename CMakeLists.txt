@@ -37,6 +37,10 @@ add_subdirectory(suite/vk)
 if(EXISTS ${CMAKE_SOURCE_DIR}/rt/CMakeLists.txt)
   add_subdirectory(rt)
 endif()
+# Stress lane (Linux only: it uses fork, process groups and the kernel log).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_subdirectory(stress)
+endif()
 
 # Stamp the suite revision next to the binaries (read by tools/run-linux.sh).
 add_custom_target(suite_sha ALL

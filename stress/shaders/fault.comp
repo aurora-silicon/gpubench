@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+// Deliberate GPU page fault: stores through a device address that maps nothing.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(local_size_x = 64) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer T { uint v[]; };
+layout(push_constant) uniform PC { uvec2 addr; uint value; } pc;
+void main()
+{
+   T(pc.addr).v[gl_GlobalInvocationID.x * 1024u] = pc.value;
+}
