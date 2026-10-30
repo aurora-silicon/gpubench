@@ -67,7 +67,7 @@ one `gpubench-stress/1` line per test (`status` pass/fail/skip, `reason`, `itera
 | --- | --- |
 | 0 | every selected test passed or was skipped |
 | 1 | at least one test failed, including new kernel-log errors with `--kernel-log` |
-| 2 | usage error, no usable Vulkan device, or the kernel log could not be read |
+| 2 | usage error, no usable Vulkan device, or the kernel log could not be read (at start, or for any test when no test failed; such tests carry `kernel_log.read: false` and the summary counts them in `kernel_log_unread`) |
 | 3 | a test process could not be killed after its deadline (the GPU or driver is probably wedged); the run was aborted |
 
 A test skips when the device lacks what it needs (two queues, buffer device address, ray query,

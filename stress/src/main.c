@@ -441,7 +441,7 @@ main(int argc, char **argv)
    fprintf(stderr, "gpubench-stress-vk: %s (%s %s), %d tests, %.0f s budget, seed %llu%s\n", caps.name, caps.driver,
            caps.driver_info, nsel, duration, (unsigned long long)o.seed, klog ? ", kernel log checked" : "");
 
-   int passed = 0, failed = 0, skipped = 0, code = 0;
+   int passed = 0, failed = 0, skipped = 0, unread = 0, code = 0;
    uint64_t run0 = st_now();
    for (int i = 0; i < nsel; i++) {
       const struct st_test *t = sel[i];
@@ -451,20 +451,28 @@ main(int argc, char **argv)
       fprintf(stderr, "[%2d/%d] %-15s %.0f s ...\n", i + 1, nsel, t->name, budget);
       struct klog_lines kl = {0};
       bool kl_err = false;
-      if (klog)
-         klog_collect(klog, NULL, &kl); /* lines from before the test belong to nobody */
+      /* Lines from before the test belong to nobody, but a failed read here means this
+       * test's window may start mid-stream, so it cannot be vouched for either. */
+      if (klog && klog_collect(klog, NULL, &kl))
+         kl_err = true;
       klog_lines_free(&kl);
       struct outcome out;
       run_one(&o, t, budget, o.seed + (uint64_t)i * 0x9e3779b97f4a7c15ull, &out);
       if (klog) {
          st_sleep_ns(500 * ST_MS); /* late lines of this test */
-         if (klog_collect(klog, t->kernel_expect, &kl)) {
+         if (klog_collect(klog, t->kernel_expect, &kl))
             kl_err = true;
-         } else if (kl.nbad) {
+         if (kl.nbad) {
             if (out.status != ST_FAIL)
                snprintf(out.r.reason, sizeof(out.r.reason), "new kernel-log error: %s", kl.bad[0]);
             out.status = ST_FAIL;
          }
+      }
+      if (kl_err) {
+         /* The run cannot claim this test was clean: exit 2 (README) unless something failed. */
+         unread++;
+         if (out.status == ST_PASS && !out.r.reason[0])
+            snprintf(out.r.reason, sizeof(out.r.reason), "kernel log could not be read; pass not confirmed");
       }
       if (out.status == ST_PASS)
          passed++;
@@ -526,7 +534,7 @@ main(int argc, char **argv)
       }
    }
    if (code != 3)
-      code = failed ? 1 : 0;
+      code = failed ? 1 : unread ? 2 : 0;
 
    gb_json_init(&j);
    gb_json_obj_begin(&j, NULL);
@@ -534,11 +542,15 @@ main(int argc, char **argv)
    gb_json_int(&j, "passed", passed);
    gb_json_int(&j, "failed", failed);
    gb_json_int(&j, "skipped", skipped);
+   gb_json_int(&j, "kernel_log_unread", unread);
    gb_json_num(&j, "wall_s", (st_now() - run0) / 1e9);
    gb_json_int(&j, "exit_code", code);
    gb_json_obj_end(&j);
    puts(j.buf);
    gb_json_free(&j);
+   if (unread)
+      fprintf(stderr, "gpubench-stress-vk: the kernel log could not be read for %d test(s); results are not confirmed\n",
+              unread);
    fprintf(stderr, "gpubench-stress-vk: %d passed, %d failed, %d skipped in %.0f s -> exit %d\n", passed, failed,
            skipped, (st_now() - run0) / 1e9, code);
    klog_close(klog);
