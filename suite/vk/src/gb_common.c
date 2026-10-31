@@ -785,8 +785,40 @@ gb_pass_merge(struct gb_pass *d, const struct gb_pass *s)
       d->win_s = s->win_s;
       d->timed = s->timed;
    }
-   for (int i = 0; i < s->nwin && i < GB_MAX_WIN; i++)
+   for (int i = 0; i < s->nwin && i < GB_MAX_WIN; i++) {
+      if (!s->win_count[i])
+         continue;
+      if (!d->win_count[i] || s->win_first_ns[i] < d->win_first_ns[i])
+         d->win_first_ns[i] = s->win_first_ns[i];
+      if (!d->win_count[i] || s->win_last_ns[i] > d->win_last_ns[i])
+         d->win_last_ns[i] = s->win_last_ns[i];
       d->win_count[i] += s->win_count[i];
+   }
+   gb_samples_append(&d->latency, &s->latency);
+   gb_samples_append(&d->submit_cpu, &s->submit_cpu);
+   gb_samples_append(&d->record_cpu, &s->record_cpu);
+   gb_samples_append(&d->gpu, &s->gpu);
+   gb_samples_append(&d->gap, &s->gap);
+   d->submits += s->submits;
+   d->failed |= s->failed;
+}
+
+/* Time per completion in each window: between its first and last completion,
+ * so the rate is not rounded to a whole number of completions per window (a
+ * row with seven per window could otherwise only move in steps of 1/7). A
+ * window with a single completion keeps the window length over its count. */
+void
+gb_pass_append(struct gb_pass *d, const struct gb_pass *s)
+{
+   if (!d->nwin) {
+      d->win_s = s->win_s;
+      d->timed = s->timed;
+   }
+   for (int i = 0; i < s->nwin && d->nwin < GB_MAX_WIN; i++, d->nwin++) {
+      d->win_count[d->nwin] = s->win_count[i];
+      d->win_first_ns[d->nwin] = s->win_first_ns[i];
+      d->win_last_ns[d->nwin] = s->win_last_ns[i];
+   }
    gb_samples_append(&d->latency, &s->latency);
    gb_samples_append(&d->submit_cpu, &s->submit_cpu);
    gb_samples_append(&d->record_cpu, &s->record_cpu);
@@ -799,9 +831,13 @@ gb_pass_merge(struct gb_pass *d, const struct gb_pass *s)
 void
 gb_pass_rate(const struct gb_pass *p, struct gb_samples *us)
 {
-   for (int i = 0; i < p->nwin; i++)
-      if (p->win_count[i])
-         gb_samples_push(us, p->win_s * 1e6 / p->win_count[i]);
+   for (int i = 0; i < p->nwin; i++) {
+      uint64_t n = p->win_count[i];
+      if (n >= 2 && p->win_last_ns[i] > p->win_first_ns[i])
+         gb_samples_push(us, (p->win_last_ns[i] - p->win_first_ns[i]) / 1e3 / (n - 1));
+      else if (n)
+         gb_samples_push(us, p->win_s * 1e6 / n);
+   }
 }
 
 int
@@ -809,7 +845,9 @@ gb_pass_put(int fd, const struct gb_pass *p)
 {
    int32_t hdr[4] = {p->nwin, p->timed, p->failed, 0};
    if (gb_write_all(fd, hdr, sizeof(hdr)) || gb_write_all(fd, &p->win_s, sizeof(double)) ||
-       gb_write_all(fd, p->win_count, sizeof(p->win_count)) || gb_write_all(fd, &p->submits, sizeof(uint64_t)))
+       gb_write_all(fd, p->win_count, sizeof(p->win_count)) ||
+       gb_write_all(fd, p->win_first_ns, sizeof(p->win_first_ns)) ||
+       gb_write_all(fd, p->win_last_ns, sizeof(p->win_last_ns)) || gb_write_all(fd, &p->submits, sizeof(uint64_t)))
       return -1;
    if (gb_wire_put_samples(fd, &p->latency) || gb_wire_put_samples(fd, &p->submit_cpu) ||
        gb_wire_put_samples(fd, &p->record_cpu) || gb_wire_put_samples(fd, &p->gpu) ||
@@ -824,7 +862,9 @@ gb_pass_get(int fd, struct gb_pass *p)
    memset(p, 0, sizeof(*p));
    int32_t hdr[4];
    if (gb_read_all(fd, hdr, sizeof(hdr)) || gb_read_all(fd, &p->win_s, sizeof(double)) ||
-       gb_read_all(fd, p->win_count, sizeof(p->win_count)) || gb_read_all(fd, &p->submits, sizeof(uint64_t)))
+       gb_read_all(fd, p->win_count, sizeof(p->win_count)) ||
+       gb_read_all(fd, p->win_first_ns, sizeof(p->win_first_ns)) ||
+       gb_read_all(fd, p->win_last_ns, sizeof(p->win_last_ns)) || gb_read_all(fd, &p->submits, sizeof(uint64_t)))
       return -1;
    p->nwin = hdr[0];
    p->timed = hdr[1];
