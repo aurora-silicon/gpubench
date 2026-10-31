@@ -97,4 +97,8 @@ for api, overrides in (([], {"MESA_GL_VERSION_OVERRIDE": "3.3"}),
     assert skip["status"] == "skip" and "compute requires" in skip["reason"], skip
     fallback = run(gl, ["--test", "render.light", "--depths", "1", *controls, "--verify"], api=api, extra_env=overrides)[0]
     assert fallback["status"] == "ok", fallback
+for extra_env, expected in (({"MESA_GLES_VERSION_OVERRIDE": "3.1"}, "ok"),
+                            ({"MESA_GLES_VERSION_OVERRIDE": "3.1", "MESA_EXTENSION_OVERRIDE": "-GL_EXT_gpu_shader5"}, "skip")):
+    r = run(gl, ["--gles", "--test", "compute.heavy", "--param", "kind=alu", "--depths", "1", *controls, "--verify"], extra_env=extra_env)[0]
+    assert r["status"] == expected, r
 print("GL/GLES llvmpipe and matched Vulkan smoke passed")

@@ -51,7 +51,9 @@ used by the flat-color workload. The GL adapter changes only shader version,
 vertex ID, descriptor, and uniform syntax in the shared GLSL sources.
 
 Desktop GL needs 3.3 for rendering and 4.3 for compute. `--gles` selects GLES
-3.0 rendering / 3.1 compute. Missing compute support produces `status=skip`.
+3.0 rendering / 3.1 compute. The FMA ALU shader additionally needs GLES 3.2
+or GLES 3.1 with [`EXT_gpu_shader5`](https://registry.khronos.org/OpenGL/extensions/EXT/EXT_gpu_shader5.txt).
+Missing compute, FMA, or matched local-size support produces `status=skip`.
 One EGL default device and one context are supported. `--mode queues` and
 `procs`, and depths outside 1..64, produce explicit skips. Nonzero `--device`
 is rejected; use the platform's EGL device selection environment when needed.

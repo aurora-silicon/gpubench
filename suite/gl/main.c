@@ -12,7 +12,7 @@ struct context {
    EGLDisplay display;
    EGLContext context;
    EGLSurface surface;
-   bool es, compute, timer;
+   bool es, compute, fma, timer;
 };
 struct assets {
    GLuint program, vao, fbo, target, tex, buffers[2];
@@ -58,6 +58,7 @@ create_context(struct context *c, bool es)
    if (c->surface == EGL_NO_SURFACE ||
        !eglMakeCurrent(c->display, c->surface, c->surface, c->context)) gb_die("EGL make-current failed");
    c->compute = epoxy_gl_version() >= (es ? 31 : 43);
+   c->fma = !es || epoxy_gl_version() >= 32 || epoxy_has_gl_extension("GL_EXT_gpu_shader5");
    c->timer = !es || epoxy_has_gl_extension("GL_EXT_disjoint_timer_query");
    glDisable(GL_DITHER);
    glDisable(GL_DEPTH_TEST);
@@ -77,11 +78,13 @@ destroy_context(struct context *c)
 static GLuint
 shader(const struct context *c, GLenum stage, const char *body)
 {
-   const char *version = c->es ? (stage == GL_COMPUTE_SHADER ? "#version 310 es\n" : "#version 300 es\n") :
+   const char *version = c->es ? (stage == GL_COMPUTE_SHADER ? (epoxy_gl_version() >= 32 ? "#version 320 es\n" : "#version 310 es\n") : "#version 300 es\n") :
                                  (stage == GL_COMPUTE_SHADER ? "#version 430 core\n" : "#version 330 core\n");
-   const char *parts[] = {version, c->es ? "precision highp float;\nprecision highp int;\nprecision highp sampler2D;\n" : "", body};
+   const char *parts[] = {version,
+      c->es && stage == GL_COMPUTE_SHADER && body == alu_comp && epoxy_gl_version() < 32 ? "#extension GL_EXT_gpu_shader5 : require\n" : "",
+      c->es ? "precision highp float;\nprecision highp int;\nprecision highp sampler2D;\n" : "", body};
    GLuint s = glCreateShader(stage);
-   glShaderSource(s, 3, parts, NULL);
+   glShaderSource(s, 4, parts, NULL);
    glCompileShader(s);
    GLint ok;
    glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
@@ -336,6 +339,7 @@ identity(struct gb_json *j, const struct context *c)
    gb_json_str(j, "loader_driver_override", getenv("MESA_LOADER_DRIVER_OVERRIDE") ? getenv("MESA_LOADER_DRIVER_OVERRIDE") : "");
    gb_json_bool(j, "compute", c->compute);
    gb_json_bool(j, "timer_queries", c->timer);
+   gb_json_bool(j, "fma", c->fma);
 }
 
 int
@@ -366,6 +370,8 @@ main(int argc, char **argv)
    int count = o.ndepths ? o.ndepths : 7;
    const char *skip = o.mode != GB_MODE_QUEUE ? "GL supports mode=queue only" :
                       w.compute && !c.compute ? "compute requires desktop GL 4.3 or GLES 3.1" : NULL;
+   if (!skip && w.kind == GB_GL_ALU && !c.fma)
+      skip = "ALU requires GLES 3.2 or GL_EXT_gpu_shader5 for matched FMA";
    if (!skip && w.compute) {
       GLint max_local, max_invocations;
       glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 0, &max_local);
