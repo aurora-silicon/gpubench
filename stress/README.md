@@ -117,7 +117,7 @@ the run exits with status 2. The default patterns are generic for Linux DRM driv
 ```
 \b(gpu|drm)\b.*(hang|hung|time ?out|timed out|reset|recover|lost|crash|fault|wedged)
 \[drm(:[^]]*)?\] \*error\*
-\b(amdgpu|radeon|i915|xe|nouveau|msm|freedreno|panfrost|panthor|lima|v3d|vc4|etnaviv|powervr|asahi)\b.*(error|fail|fault|time ?out|timed out|hang|reset|lost|crash)
+\b(amdgpu|radeon|i915|xe|nouveau|msm|freedreno|panfrost|panthor|lima|v3d|vc4|etnaviv|powervr|aurora|asahi)\b.*(error|fail|fault|time ?out|timed out|hang|reset|lost|crash)
 firmware.*(crash|hang|time ?out|timed out)
 \b(etimedout|device lost)\b
 \b(oops|kernel bug|bug:|unable to handle kernel|general protection fault|use-after-free|kasan)

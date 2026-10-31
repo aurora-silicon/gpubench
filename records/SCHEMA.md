@@ -27,7 +27,7 @@ records/<device>/<os>/<date>-<id>/
 | `os_version` | string | `/etc/os-release` PRETTY_NAME, or `sw_vers` product version |
 | `os_build` | string | macOS build (`sw_vers -buildVersion`), `null` on Linux |
 | `kernel` | string | `uname -r` (Linux), `uname -v` (macOS) |
-| `kernel_module` | object | Linux: `{"name": "asahi", "build_id": "...", "srcversion": "...", "params": {...}}` |
+| `kernel_module` | object | Linux: `{"name": "aurora", "build_id": "...", "srcversion": "...", "params": {...}}` (`asahi` on kernels before the rename) |
 | `driver` | object | from the executor `--info`: `name`, `info` (driver info string), `version`, `api_version`, `mesa_sha` (Linux) |
 | `gpu` | object | `name`, `cores` when known, `family` |
 | `firmware` | string | GPU firmware version when visible, else `null` |

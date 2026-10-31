@@ -124,7 +124,7 @@ def describe(meta, label):
     bits = [meta.get("device", "?"), meta.get("os", "?"), meta.get("os_version", "")]
     if meta.get("os") == "linux":
         km = meta.get("kernel_module") or {}
-        bits += [f"kernel {meta.get('kernel')}", f"asahi.ko {str(km.get('build_id') or '?')[:12]}",
+        bits += [f"kernel {meta.get('kernel')}", f"{km.get('name') or 'asahi'}.ko {str(km.get('build_id') or '?')[:12]}",
                  f"Mesa {meta.get('mesa_sha')}"]
     else:
         bits += [f"build {meta.get('os_build')}"]

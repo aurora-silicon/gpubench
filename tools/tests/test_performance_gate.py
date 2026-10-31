@@ -184,6 +184,15 @@ class GateTests(unittest.TestCase):
             self.assertFalse(ledger['qualification_eligible'])
             self.assertFalse(ledger['passed'])
 
+    def test_both_gpu_module_names_identify_the_stack(self):
+        for name, eligible in (('aurora', True), ('asahi', True), ('panfrost', False)):
+            with self.subTest(name=name):
+                meta = metadata('linux')
+                meta['kernel_module'].update(name=name)
+                candidate = gate.load_record(self.record([result(9)], meta=meta), 'linux')
+                errors = gate.qualification_errors(candidate)
+                self.assertEqual(not any('GPU kernel module' in e for e in errors), eligible)
+
     def test_retained_evidence_contradictions_block_eligibility(self):
         for name, data in [('assets-manifest.json', '{}'), ('new-faults.txt', 'GPU fault'),
                            ('commands.jsonl', '{"rc":1}\n')]:
