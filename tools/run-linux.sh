@@ -63,12 +63,13 @@ state_json() {
   printf '},"loadavg":%s}' "$(jstr "$(cat /proc/loadavg)")"
 }
 
-module_json() {
-  local m=/sys/module/asahi f bid="" first=1
+module_json() { # the GPU kernel module: aurora, or asahi on kernels before the rename
+  local m=/sys/module/aurora f bid="" first=1
+  [ -d "$m" ] || m=/sys/module/asahi
   [ -d "$m" ] || { printf null; return; }
   f=$m/notes/.note.gnu.build-id
   bid=$( (cat "$f" 2>/dev/null || sudo -n cat "$f" 2>/dev/null) | od -An -tx1 -v | tr -d ' \n' | tail -c 40)
-  printf '{"name":"asahi","build_id":%s,"srcversion":%s,"params":{' "$(jstr_or_null "$bid")" \
+  printf '{"name":"%s","build_id":%s,"srcversion":%s,"params":{' "${m##*/}" "$(jstr_or_null "$bid")" \
     "$(jstr_or_null "$(cat $m/srcversion 2>/dev/null)")"
   for f in $m/parameters/*; do
     [ -r "$f" ] || continue
@@ -80,13 +81,13 @@ module_json() {
 
 gpu_log() { # kernel log lines since the run started that point at GPU trouble
   journalctl -k --since "@$T0" --no-pager -q 2>/dev/null |
-    grep -iE 'asahi|agx|drm' | grep -iE 'GPU fault|page fault|crashed|runtime stopped|client failed|timed out|timeout|still draining|queued-failure|hang|recover' || true
+    grep -iE 'aurora|asahi|agx|drm' | grep -iE 'GPU fault|page fault|crashed|runtime stopped|client failed|timed out|timeout|still draining|queued-failure|hang|recover' || true
 }
 
-gpu_notes() { # other asahi lines worth keeping with the record (do not stop the run)
-  journalctl -k --since "@$T0" --no-pager -q 2>/dev/null | grep -iE 'asahi|agx' |
+gpu_notes() { # other GPU driver lines worth keeping with the record (do not stop the run)
+  journalctl -k --since "@$T0" --no-pager -q 2>/dev/null | grep -iE 'aurora|asahi|agx' |
     grep -viE 'GPU fault|page fault|crashed|runtime stopped|client failed|timed out|timeout|still draining|queued-failure|hang|recover' |
-    sed -E 's/^.*(asahi|agx)/\1/I; s/[0-9]{4,}/N/g' | sort | uniq -c | sort -rn | head -20 || true
+    sed -E 's/^.*(aurora|asahi|agx)/\1/I; s/[0-9]{4,}/N/g' | sort | uniq -c | sort -rn | head -20 || true
 }
 
 desktop_alive() {
@@ -125,7 +126,7 @@ for c in $SEL; do
   fi
 done
 STATE_AFTER=$(state_json)
-FW=$(journalctl -k -b --no-pager -q 2>/dev/null | grep -iE 'asahi.*(firmware|fw).*version|firmware version' | tail -1 | sed 's/.*\(irmware\|fw\)[^0-9]*//I' | cut -c1-40)
+FW=$(journalctl -k -b --no-pager -q 2>/dev/null | grep -iE '(aurora|asahi).*(firmware|fw).*version|firmware version' | tail -1 | sed 's/.*\(irmware\|fw\)[^0-9]*//I' | cut -c1-40)
 OSV=$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-linux}")
 GPU_NAME=$(printf '%s' "$INFO" | sed -n 's/.*"device_name":"\([^"]*\)".*/\1/p')
 SUITE_SHA=$(cat "$BIN/SUITE_SHA" 2>/dev/null || git -C "$ROOT" describe --always --dirty=+dirty --abbrev=7 2>/dev/null || echo unknown)

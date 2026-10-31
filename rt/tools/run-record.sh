@@ -73,11 +73,13 @@ ENVJ=$(env | grep -E '^(VK_DRIVER_FILES|VK_ICD_FILENAMES|MESA_|HK_|AGX_|ASAHI_)'
 if [ "$OS" = macos ]; then
    KMOD=null; HEALTH=null; FW=null
 else
-   bid=$(modinfo -F srcversion asahi 2>/dev/null); par=""
-   for f in /sys/module/asahi/parameters/*; do [ -r "$f" ] && par="$par${par:+,}\"$(basename "$f")\":\"$(cat "$f" 2>/dev/null)\""; done
-   bidf=$(readelf -n "$(modinfo -n asahi 2>/dev/null)" 2>/dev/null | awk '/Build ID/ { print $3; exit }')
-   KMOD="{\"name\":\"asahi\",\"build_id\":\"$bidf\",\"srcversion\":\"$bid\",\"params\":{$par}}"
-   KL=$(journalctl -k -b --since "@$T0" 2>/dev/null | grep -i -E 'asahi|agx|gpu|drm|fault|timeout' | tail -40 | esc)
+   # The GPU kernel module: aurora, or asahi on kernels before the rename.
+   km=aurora; [ -d /sys/module/aurora ] || km=asahi
+   bid=$(modinfo -F srcversion $km 2>/dev/null); par=""
+   for f in /sys/module/$km/parameters/*; do [ -r "$f" ] && par="$par${par:+,}\"$(basename "$f")\":\"$(cat "$f" 2>/dev/null)\""; done
+   bidf=$(readelf -n "$(modinfo -n $km 2>/dev/null)" 2>/dev/null | awk '/Build ID/ { print $3; exit }')
+   KMOD="{\"name\":\"$km\",\"build_id\":\"$bidf\",\"srcversion\":\"$bid\",\"params\":{$par}}"
+   KL=$(journalctl -k -b --since "@$T0" 2>/dev/null | grep -i -E 'aurora|asahi|agx|gpu|drm|fault|timeout' | tail -40 | esc)
    alive=false; pgrep -x Hyprland > /dev/null && alive=true
    HEALTH="{\"kernel_log\":\"$KL\",\"desktop_alive\":$alive}"
    FW=null
