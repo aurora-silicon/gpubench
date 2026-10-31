@@ -30,6 +30,8 @@ path: that is what the suite measures.
 | `idle.wake` | one compute.light submission after `gap_ms` (2, 20, 200) of GPU idle, then one immediately after | GPU power-down / wake-up path in firmware and kernel (`wake_cost_us`) |
 | `query` | compute.light with start/end timestamps (`kind=timestamp`) or render.light with an occlusion query (`kind=occlusion`), plus result readback | query/timestamp overhead and readback |
 
+The optional [GL/GLES executor](gl/README.md) covers the render and compute subset with the same sizes, warm-up, windows, and statistics. It also adds matched Vulkan `render.heavy kind=opaque` and `kind=texture` cases. See its documentation for supported modes and API comparison limits.
+
 Present/swapchain is not covered yet (headless first).
 
 ## Depth

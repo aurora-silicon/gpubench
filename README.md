@@ -1,8 +1,8 @@
 # gpubench
 
-Vulkan and Metal benchmarks for GPU driver development. The standard suite measures submission, scheduling, synchronization, memory management, and GPU execution. The ray-tracing extension adds procedural scenes, acceleration-structure builds, and ray-query workloads. The stress suite checks driver robustness with pass/fail tests.
+Vulkan, Metal, and GL/GLES benchmarks for GPU driver development. The standard suite measures submission, scheduling, synchronization, memory management, and GPU execution. The ray-tracing extension adds procedural scenes, acceleration-structure builds, and ray-query workloads. The stress suite checks driver robustness with pass/fail tests.
 
-Both executors use matching workloads, dimensions, queue depths, warm-up periods, and timing windows. Untimed throughput and GPU-timestamp measurements are separate passes. See [the timing method](suite/README.md) and [comparison limits](suite/FAIRNESS.md).
+The Vulkan and Metal executors use matching workloads, dimensions, queue depths, warm-up periods, and timing windows. Untimed throughput and GPU-timestamp measurements are separate passes. See [the timing method](suite/README.md) and [comparison limits](suite/FAIRNESS.md).
 
 ## Published records
 
@@ -43,6 +43,8 @@ Set `VK_DRIVER_FILES` to select a specific driver. The Linux runner accepts `--l
 Set `GB_COOLDOWN_CMD` to a script to run before each chunk, for example one that waits for the GPU to cool. It gets the record directory and the chunk name as arguments. It is skipped after a chunk that recorded no ok rows, such as ray-tracing chunks on a driver without ray tracing.
 
 For a short functional run, set `GB_WARMUP_MS=20 GB_RUNS=1 GB_RUN_MS=40 GB_TIMED_RUNS=1`. Keep those results separate from measured runs.
+
+The optional [GL/GLES executor](suite/gl/README.md) runs matched render and compute workloads through headless EGL. Build with `-DGB_BUILD_GL=ON`; use `MESA_LOADER_DRIVER_OVERRIDE=asahi` or `zink` to select the Mesa GL driver.
 
 ## Layout
 

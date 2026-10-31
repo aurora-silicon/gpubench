@@ -9,6 +9,7 @@ GB_SHADER(alu_comp)
 GB_SHADER(bw_comp)
 GB_SHADER(fs_vert)
 GB_SHADER(color_frag)
+GB_SHADER(texture_frag)
 GB_SHADER(geom_vert)
 GB_SHADER(tvb_vert)
 #undef GB_SHADER

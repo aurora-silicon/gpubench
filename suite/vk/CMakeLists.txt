@@ -12,7 +12,7 @@ target_link_libraries(gb_vk PUBLIC gb_common ${GB_VULKAN_LIB})
 
 # SPIR-V for the suite's shaders, embedded into the executor.
 set(GB_SHADER_DIR ${CMAKE_SOURCE_DIR}/suite/shaders)
-set(GB_SHADERS light.comp alu.comp bw.comp fs.vert color.frag geom.vert tvb.vert)
+set(GB_SHADERS light.comp alu.comp bw.comp fs.vert color.frag texture.frag geom.vert tvb.vert)
 set(spv_files)
 foreach(s IN LISTS GB_SHADERS)
   set(out ${CMAKE_CURRENT_BINARY_DIR}/spv/${s}.spv)

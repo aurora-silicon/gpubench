@@ -403,15 +403,15 @@ gb_shader(struct gb_vk *vk, const uint32_t *code, size_t bytes)
 }
 
 static void
-make_layout(struct gb_vk *vk, int nbuf, VkShaderStageFlags push_stages, uint32_t push_size, struct gb_pipe *p)
+make_layout(struct gb_vk *vk, int nbuf, VkShaderStageFlags push_stages, uint32_t push_size, bool texture, struct gb_pipe *p)
 {
    VkDescriptorSetLayoutBinding binds[8];
    for (int i = 0; i < nbuf; i++)
       binds[i] = (VkDescriptorSetLayoutBinding){
          .binding = i,
-         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorType = texture ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          .descriptorCount = 1,
-         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+         .stageFlags = texture ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_COMPUTE_BIT,
       };
    VkDescriptorSetLayoutCreateInfo dci = {
       .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -420,7 +420,7 @@ make_layout(struct gb_vk *vk, int nbuf, VkShaderStageFlags push_stages, uint32_t
    };
    if (nbuf) {
       GB_VK_CHECK(vkCreateDescriptorSetLayout(vk->dev, &dci, NULL, &p->dsl));
-      VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nbuf};
+      VkDescriptorPoolSize ps = {texture ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nbuf};
       VkDescriptorPoolCreateInfo pci = {
          .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
          .maxSets = 1,
@@ -454,7 +454,7 @@ gb_compute_pipe(struct gb_vk *vk, const uint32_t *code, size_t bytes, int nbuf, 
                 struct gb_pipe *p)
 {
    memset(p, 0, sizeof(*p));
-   make_layout(vk, nbuf, VK_SHADER_STAGE_COMPUTE_BIT, push_size, p);
+   make_layout(vk, nbuf, VK_SHADER_STAGE_COMPUTE_BIT, push_size, false, p);
    VkShaderModule m = gb_shader(vk, code, bytes);
    VkComputePipelineCreateInfo ci = {
       .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
@@ -490,12 +490,12 @@ gb_pipe_set_buffers(struct gb_vk *vk, struct gb_pipe *p, struct gb_buf *const *b
    vkUpdateDescriptorSets(vk->dev, n, w, 0, NULL);
 }
 
-void
-gb_graphics_pipe(struct gb_vk *vk, const uint32_t *vs, size_t vs_bytes, const uint32_t *fs, size_t fs_bytes,
-                 VkFormat fmt, enum gb_blend blend, uint32_t push_size, struct gb_pipe *p)
+static void
+graphics_pipe(struct gb_vk *vk, const uint32_t *vs, size_t vs_bytes, const uint32_t *fs, size_t fs_bytes,
+                 VkFormat fmt, enum gb_blend blend, uint32_t push_size, bool texture, struct gb_pipe *p)
 {
    memset(p, 0, sizeof(*p));
-   make_layout(vk, 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, push_size, p);
+   make_layout(vk, texture ? 1 : 0, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, push_size, texture, p);
    VkShaderModule mv = gb_shader(vk, vs, vs_bytes), mf = gb_shader(vk, fs, fs_bytes);
    VkPipelineShaderStageCreateInfo st[2] = {
       {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -574,6 +574,20 @@ gb_graphics_pipe(struct gb_vk *vk, const uint32_t *vs, size_t vs_bytes, const ui
    GB_VK_CHECK(vkCreateGraphicsPipelines(vk->dev, VK_NULL_HANDLE, 1, &ci, NULL, &p->pipe));
    vkDestroyShaderModule(vk->dev, mv, NULL);
    vkDestroyShaderModule(vk->dev, mf, NULL);
+}
+
+void
+gb_graphics_pipe(struct gb_vk *vk, const uint32_t *vs, size_t vs_bytes, const uint32_t *fs, size_t fs_bytes,
+                 VkFormat fmt, enum gb_blend blend, uint32_t push_size, struct gb_pipe *p)
+{
+   graphics_pipe(vk, vs, vs_bytes, fs, fs_bytes, fmt, blend, push_size, false, p);
+}
+
+void
+gb_texture_pipe(struct gb_vk *vk, const uint32_t *vs, size_t vs_bytes, const uint32_t *fs, size_t fs_bytes,
+                VkFormat fmt, struct gb_pipe *p)
+{
+   graphics_pipe(vk, vs, vs_bytes, fs, fs_bytes, fmt, GB_BLEND_ALPHA, 16, true, p);
 }
 
 void

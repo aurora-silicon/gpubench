@@ -209,12 +209,13 @@ static const struct gb_stream_test t_compute_heavy = {
 
 /* ======================= render.light / render.heavy / render.tvb ======================= */
 
-enum r_kind { R_TRI, R_CLEAR, R_FILL, R_GEOM, R_TVB };
+enum r_kind { R_TRI, R_CLEAR, R_FILL, R_OPAQUE, R_TEXTURE, R_GEOM, R_TVB };
 
 struct r_state {
    enum r_kind kind;
    struct gb_pipe p;
-   struct gb_img img;
+   struct gb_img img, tex;
+   VkSampler sampler;
    uint32_t tris;
 };
 
@@ -232,6 +233,45 @@ r_setup_kind(struct gb_vk *vk, enum r_kind kind, uint32_t w, uint32_t h, uint32_
    case R_FILL:
       gb_graphics_pipe(vk, GB_SPV(fs_vert), GB_SPV(color_frag), RT_FMT, GB_BLEND_ALPHA, 16, &st->p);
       break;
+   case R_OPAQUE:
+      gb_graphics_pipe(vk, GB_SPV(fs_vert), GB_SPV(color_frag), RT_FMT, GB_BLEND_NONE, 16, &st->p);
+      break;
+   case R_TEXTURE: {
+      gb_texture_pipe(vk, GB_SPV(fs_vert), GB_SPV(texture_frag), RT_FMT, &st->p);
+      gb_img_create(vk, GB_TEX_DIM, GB_TEX_DIM, RT_FMT,
+                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, &st->tex);
+      struct gb_buf upload;
+      gb_buf_create(vk, GB_TEX_DIM * GB_TEX_DIM * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, &upload);
+      unsigned char *data = upload.map;
+      for (unsigned y = 0; y < GB_TEX_DIM; y++)
+         for (unsigned x = 0; x < GB_TEX_DIM; x++) {
+            unsigned i = (y * GB_TEX_DIM + x) * 4;
+            data[i] = x; data[i+1] = y; data[i+2] = x ^ y; data[i+3] = 255;
+         }
+      VkCommandBuffer cb = gb_oneshot_begin(vk);
+      gb_img_barrier(cb, st->tex.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+      VkBufferImageCopy region = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                   .imageExtent = {GB_TEX_DIM, GB_TEX_DIM, 1}};
+      vkCmdCopyBufferToImage(cb, upload.buf, st->tex.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+      gb_img_barrier(cb, st->tex.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+      gb_oneshot_end(vk, cb);
+      gb_buf_destroy(vk, &upload);
+      VkSamplerCreateInfo sci = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+         .magFilter = VK_FILTER_NEAREST, .minFilter = VK_FILTER_NEAREST,
+         .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+         .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT, .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+         .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT, .maxLod = 0};
+      GB_VK_CHECK(vkCreateSampler(vk->dev, &sci, NULL, &st->sampler));
+      VkDescriptorImageInfo ii = {st->sampler, st->tex.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+      VkWriteDescriptorSet wr = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+         .dstSet = st->p.set, .dstBinding = 0, .descriptorCount = 1,
+         .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &ii};
+      vkUpdateDescriptorSets(vk->dev, 1, &wr, 0, NULL);
+      break;
+   }
    case R_GEOM:
       gb_graphics_pipe(vk, GB_SPV(geom_vert), GB_SPV(color_frag), RT_FMT, GB_BLEND_NONE, 16, &st->p);
       break;
@@ -250,6 +290,8 @@ r_teardown(struct gb_vk *vk, void *p)
    struct r_state *st = p;
    gb_pipe_destroy(vk, &st->p);
    gb_img_destroy(vk, &st->img);
+   if (st->sampler) vkDestroySampler(vk->dev, st->sampler, NULL);
+   if (st->tex.img) gb_img_destroy(vk, &st->tex);
    free(st);
 }
 
@@ -262,8 +304,12 @@ r_record(void *p, VkCommandBuffer cb, uint64_t k)
    if (st->kind != R_CLEAR) {
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, st->p.pipe);
       vkCmdPushConstants(cb, st->p.layout, st->p.push_stages, 0, 16, color);
+      if (st->kind == R_TEXTURE)
+         vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, st->p.layout, 0, 1, &st->p.set, 0, NULL);
       switch (st->kind) {
       case R_TRI: vkCmdDraw(cb, 3, 1, 0, 0); break;
+      case R_OPAQUE:
+      case R_TEXTURE:
       case R_FILL: vkCmdDraw(cb, 3, GB_FILL_LAYERS, 0, 0); break;
       case R_GEOM: vkCmdDraw(cb, 3 * GB_GEOM_TRIS, 1, 0, 0); break;
       case R_TVB: vkCmdDraw(cb, 3 * st->tris, 1, 0, 0); break;
@@ -305,9 +351,13 @@ rh_setup(struct gb_vk *vk, const struct gb_opts *o, char *err, size_t n)
    }
    if (!strcmp(kind, "fill"))
       return r_setup_kind(vk, R_FILL, w, h, 0);
+   if (!strcmp(kind, "opaque"))
+      return r_setup_kind(vk, R_OPAQUE, w, h, 0);
+   if (!strcmp(kind, "texture"))
+      return r_setup_kind(vk, R_TEXTURE, w, h, 0);
    if (!strcmp(kind, "geom"))
       return r_setup_kind(vk, R_GEOM, w, h, 0);
-   set_err(err, n, "kind must be fill or geom");
+   set_err(err, n, "kind must be fill, opaque, texture or geom");
    return NULL;
 }
 

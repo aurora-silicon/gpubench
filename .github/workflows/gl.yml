@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: GL executor
+on: [push, pull_request]
+jobs:
+  llvmpipe:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libepoxy-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers libgl1-mesa-dri glslang-tools
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DGB_BUILD_GL=ON -DBUILD_TESTING=ON
+          cmake --build build --target gpubench-gl gpubench-vk test-gl-work -j2
+      - name: Unit tests and headless CPU smoke
+        run: ctest --test-dir build --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gl-test-log
+          path: build/Testing/Temporary/LastTest.log
