@@ -9,3 +9,5 @@ API operations also differ in scope. Vulkan timeline/binary semaphores use Metal
 For a driver comparison, verify matching shader work, compiler output, resource formats, concurrency, and operating conditions. The Vulkan executor exposes pipeline statistics with `--shader-stats`; the Metal executor can retain its own pipeline archives with `--dump-archive DIR`. Compiler differences, register use, and fixed-function setup can affect execution even when source algorithms match.
 
 The current publication contains macOS measurement records. Linux performance comparisons will be published separately after qualification. See [record provenance](../records/README.md).
+
+The optional GL/GLES executor shares render/compute shader algorithms and workload dimensions with Vulkan. GL fence/flush submission and implicit hazard handling have different API scopes from Vulkan command buffers and explicit synchronization. No compiled-code parity is claimed for GL or Zink. See [the GL timing notes](gl/README.md#timing-and-comparison-limits).

@@ -98,6 +98,9 @@ enum gb_blend { GB_BLEND_NONE = 0, GB_BLEND_ALPHA };
 void gb_graphics_pipe(struct gb_vk *vk, const uint32_t *vs, size_t vs_bytes, const uint32_t *fs,
                       size_t fs_bytes, VkFormat fmt, enum gb_blend blend, uint32_t push_size,
                       struct gb_pipe *p);
+/* Graphics variant with a combined image sampler at set 0, binding 0. */
+void gb_texture_pipe(struct gb_vk *vk, const uint32_t *vs, size_t vs_bytes, const uint32_t *fs,
+                     size_t fs_bytes, VkFormat fmt, struct gb_pipe *p);
 void gb_pipe_destroy(struct gb_vk *vk, struct gb_pipe *p);
 /* Begin dynamic rendering with a cleared color attachment, set viewport/scissor. */
 void gb_begin_render(VkCommandBuffer cb, const struct gb_img *im, const float clear[4]);

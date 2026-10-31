@@ -14,6 +14,7 @@
 #define GB_BW_LOCAL 256u
 #define GB_LIGHT_DIM 64u                /* render.light target */
 #define GB_FILL_LAYERS 16u              /* render.heavy kind=fill */
+#define GB_TEX_DIM 256u                 /* render.heavy kind=texture */
 #define GB_GEOM_TRIS 262144u            /* render.heavy kind=geom */
 #define GB_TVB_W 1920u                  /* render.tvb target */
 #define GB_TVB_H 1080u
