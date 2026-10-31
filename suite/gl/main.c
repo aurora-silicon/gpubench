@@ -210,7 +210,7 @@ verify(const struct gb_gl_work *w, const struct assets *a)
                   for (int j = 0; j < 8; j++) x[j] = fmaf(x[j], GB_ALU_A, GB_ALU_B);
                expected = ((x[0]+x[1])+(x[2]+x[3]))+((x[4]+x[5])+(x[6]+x[7]));
             }
-            if (fabsf(((float *)data)[i] - expected) > 0.001f) gb_die("compute readback mismatch at %zu", i);
+            if (!isfinite(((float *)data)[i]) || fabsf(((float *)data)[i] - expected) > 0.001f) gb_die("compute readback mismatch at %zu", i);
          }
       }
       if (!glUnmapBuffer(GL_SHADER_STORAGE_BUFFER)) gb_die("verification map invalidated");
