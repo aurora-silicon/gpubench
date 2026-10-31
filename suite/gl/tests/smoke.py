@@ -69,12 +69,12 @@ for api in ([], ["--gles"]):
                     assert v[key] == g[key], (key, v, g)
                 for name in ("gpix_s", "gflops", "gbps", "mtri_s"):
                     if name in g["metrics"]:
-                        # Derived work per submit is equal even when performance differs.
+                        # Check work per submit allowing the shared JSON formatter's four-decimal rounding.
                         for r in (v, g):
                             work = [a * b for a, b in zip(r["metrics"][name]["samples"], r["metrics"]["us_per_submit"]["samples"])]
-                            assert max(work) - min(work) < max(work) * 1e-6, r
+                            assert max(work) - min(work) < max(work) * 0.01, r
                         assert math.isclose(v["metrics"][name]["samples"][0] * v["metrics"]["us_per_submit"]["samples"][0],
-                                            g["metrics"][name]["samples"][0] * g["metrics"]["us_per_submit"]["samples"][0]), (v, g)
+                                            g["metrics"][name]["samples"][0] * g["metrics"]["us_per_submit"]["samples"][0], rel_tol=0.01), (v, g)
     off = run(gl, ["--test", "compute.light", "--depths", "1", *controls, "--timestamps", "off"], api=api)[0]
     assert "gpu_us" not in off["metrics"] and "us_per_submit_timed" not in off["metrics"], off
     for mode in ("queues", "procs"):
