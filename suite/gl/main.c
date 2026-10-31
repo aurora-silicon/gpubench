@@ -13,6 +13,7 @@ struct context {
    EGLContext context;
    EGLSurface surface;
    bool es, compute, fma, timer;
+   GLint timer_bits;
 };
 struct assets {
    GLuint program, vao, fbo, target, tex, buffers[2];
@@ -60,6 +61,11 @@ create_context(struct context *c, bool es)
    c->compute = epoxy_gl_version() >= (es ? 31 : 43);
    c->fma = !es || epoxy_gl_version() >= 32 || epoxy_has_gl_extension("GL_EXT_gpu_shader5");
    c->timer = !es || epoxy_has_gl_extension("GL_EXT_disjoint_timer_query");
+   if (c->timer) {
+      if (es) glGetQueryivEXT(GL_TIMESTAMP_EXT, GL_QUERY_COUNTER_BITS_EXT, &c->timer_bits);
+      else glGetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, &c->timer_bits);
+      c->timer = c->timer_bits == 64;
+   }
    glDisable(GL_DITHER);
    glDisable(GL_DEPTH_TEST);
    glDisable(GL_CULL_FACE);
@@ -341,6 +347,7 @@ identity(struct gb_json *j, const struct context *c)
    gb_json_bool(j, "compute", c->compute);
    gb_json_bool(j, "timer_queries", c->timer);
    gb_json_bool(j, "fma", c->fma);
+   gb_json_int(j, "timer_bits", c->timer_bits);
 }
 
 int
@@ -393,7 +400,7 @@ main(int argc, char **argv)
       }
       gb_result_run_info(&r, o.warmup_ms, o.runs, o.run_ms);
       bool timed = o.timestamps && c.timer && o.timed_runs > 0;
-      if (o.timestamps && !c.timer) gb_json_str(&r.j, "timed_pass_skip", "timer queries unavailable");
+      if (o.timestamps && !c.timer) gb_json_str(&r.j, "timed_pass_skip", "64-bit timestamp queries unavailable");
       struct gb_pass u = {0}, t = {0};
       run_pass(&c, &w, &a, depth, false, o.warmup_ms, o.runs, o.run_ms, &u);
       if (timed && !u.failed) run_pass(&c, &w, &a, depth, true,

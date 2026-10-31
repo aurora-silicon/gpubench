@@ -70,7 +70,9 @@ before the slot is reused. The default depths match Vulkan: 1,2,4,8,16,32,64.
 
 The optional timed pass has three windows and at most 100 ms warm-up, matching
 Vulkan. Desktop GL uses timestamp queries; GLES uses
-`EXT_disjoint_timer_query` when available. Unsupported timers omit the timed
+`EXT_disjoint_timer_query` when available. The timed pass requires 64-bit
+timestamp counters; narrower counters are skipped to avoid wraparound ambiguity.
+Unsupported timers omit the timed
 pass with `timed_pass_skip`; a disjoint timer fails the configuration. The
 untimed pass has no queries. Compare `us_per_submit` between drivers, keeping
 instrumented metrics separate.
