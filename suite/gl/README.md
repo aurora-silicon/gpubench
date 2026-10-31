@@ -36,7 +36,7 @@ contexts and unsupported configurations. CI retains the test log.
 | `render.light kind=tri` (default) / `clear` | 64x64 RGBA8, clear to (0.1, 0.2, 0.3, 1); optional full-screen triangle |
 | `render.heavy kind=fill` (default) | 16 full-screen triangle instances, RGBA8, source-alpha blending; color and alpha factors match Vulkan |
 | `render.heavy kind=opaque` | Same 16 instances, blending disabled |
-| `render.heavy kind=texture` | Same 16 instances, blending disabled, one nearest-filtered repeating level-zero lookup per fragment from a 256x256 RGBA8 pattern |
+| `render.heavy kind=texture` | Same 16 instances and source-alpha blending as `fill`, one nearest-filtered repeating level-zero lookup per fragment from a 256x256 RGBA8 pattern |
 | `render.heavy kind=geom` | 262144 grid triangles, blending disabled |
 | `compute.light` | 1 group of 32 threads, one uint store per thread |
 | `compute.heavy kind=alu` (default) | 1024 groups of 256 threads, 8 independent FMA chains, 4 steps per iteration, 128 iterations, one float output per thread |
@@ -81,7 +81,8 @@ command buffers and then submits them. These CPU metrics describe different
 API scopes. GL also imposes its own ordering and resource hazard handling;
 source equivalence does not establish equal native shader code, identical
 render-pass boundaries, or identical scheduling. The fill workload is already
-blended, so use `opaque` versus `fill` to examine blend cost. The minimal
+blended, so use `opaque` versus `fill` to examine blend cost. The `opaque` rate counts requested layers; hidden-surface removal may eliminate
+covered fragments. `texture` retains blending so all layers contribute. The minimal
 texture test measures one cached lookup, not a texture bandwidth sweep.
 
 ## Paired native-versus-Zink commands

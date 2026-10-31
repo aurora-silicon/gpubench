@@ -587,7 +587,7 @@ void
 gb_texture_pipe(struct gb_vk *vk, const uint32_t *vs, size_t vs_bytes, const uint32_t *fs, size_t fs_bytes,
                 VkFormat fmt, struct gb_pipe *p)
 {
-   graphics_pipe(vk, vs, vs_bytes, fs, fs_bytes, fmt, GB_BLEND_NONE, 16, true, p);
+   graphics_pipe(vk, vs, vs_bytes, fs, fs_bytes, fmt, GB_BLEND_ALPHA, 16, true, p);
 }
 
 void

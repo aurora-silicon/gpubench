@@ -28,7 +28,7 @@ def run(exe, args, *, api=(), extra_env=None, good=True):
         return
     return [json.loads(line) for line in p.stdout.splitlines()]
 
-controls = ["--warmup-ms", "20", "--runs", "2", "--run-ms", "100", "--timed-runs", "1"]
+controls = ["--warmup-ms", "20", "--runs", "2", "--run-ms", "250", "--timed-runs", "1"]
 cases = [("render.light", "tri"), ("render.light", "clear"),
          ("render.heavy", "fill"), ("render.heavy", "opaque"),
          ("render.heavy", "texture"), ("render.heavy", "geom"),
@@ -49,7 +49,7 @@ for api in ([], ["--gles"]):
         for r in records:
             assert r["schema"] == "gpubench-result/1" and r["status"] == "ok", r
             assert r["depth"] in (1, 4) and r["counts"]["submits"] > 0, r
-            assert r["warmup_ms"] == 20 and r["runs"] == 2 and r["run_ms"] == 100, r
+            assert r["warmup_ms"] == 20 and r["runs"] == 2 and r["run_ms"] == 250, r
             assert r["metrics"]["latency_us"]["n"] == r["counts"]["submits"], r
             m = r["metrics"]["us_per_submit"]
             assert m["n"] == 2 and len(m["samples"]) == 2 and m["median"] > 0, r

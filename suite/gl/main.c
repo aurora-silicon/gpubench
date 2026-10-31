@@ -147,7 +147,7 @@ setup(const struct context *c, const struct gb_gl_work *w, struct assets *a)
       glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, a->target, 0);
       if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) gb_die("incomplete RGBA8 framebuffer");
       glViewport(0, 0, w->w, w->h);
-      if (w->kind == GB_GL_FILL) {
+      if (w->kind == GB_GL_FILL || w->kind == GB_GL_TEXTURE) {
          glEnable(GL_BLEND);
          glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
       } else glDisable(GL_BLEND);
@@ -222,7 +222,8 @@ verify(const struct gb_gl_work *w, const struct assets *a)
       for (int i = 0; i < 4; i++) {
          float expected = w->kind == GB_GL_CLEAR ? clear[i] : w->kind == GB_GL_TEXTURE && i < 3 ? 0 : color[i];
          if (w->kind == GB_GL_TEXTURE && i < 3) expected = (i == 0 ? 13.0f : i == 1 ? 29.0f : (13 ^ 29)) / 255.0f * color[i];
-         if (w->kind == GB_GL_FILL) expected = i == 3 ? 1 : color[i] + (clear[i] - color[i]) / 65536.0f;
+         if (w->kind == GB_GL_FILL || w->kind == GB_GL_TEXTURE)
+            expected = i == 3 ? 1 : expected + (clear[i] - expected) / 65536.0f;
          if (abs((int)pixel[i] - (int)lroundf(expected * 255)) > 2) gb_die("render readback mismatch channel %d: %u", i, pixel[i]);
       }
    }
