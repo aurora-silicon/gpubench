@@ -260,7 +260,7 @@ stream_run(GBStream *s, bool timed, uint64_t t0, uint64_t warmup_ns, int nwin, u
             }
             bool measured = t >= tm0 && t < t_end;
             if (measured) {
-               out->win_count[(t - tm0) / win_ns]++;
+               gb_pass_count(out, t, tm0, win_ns);
                gb_samples_push(&out->latency, (t - submit_ns[slot]) / 1e3);
             }
             if (timed) {
@@ -1019,13 +1019,23 @@ run_query(const struct gb_opts *o)
       @autoreleasepool {
          int d = depths[di];
          struct gb_pass bp = {0}, qp = {0};
-         GBStream *s = [[GBStream alloc] initWithQueue:new_queue(d) depth:d encode:benc done:nil];
-         stream_run(s, false, gb_now_ns(), W, o->runs, R, &bp);
-         s = [[GBStream alloc] initWithQueue:new_queue(d) depth:d encode:qenc done:qdone];
          gb_samples_clear(&readback);
-         collect = true;
-         stream_run(s, false, gb_now_ns(), W, o->runs, R, &qp);
-         collect = false;
+         /* Base and query windows alternate in ABBA order, as on Vulkan: a drift of the GPU's or the system's
+          * state over the row falls on both alike instead of showing as an overhead of either sign. */
+         for (int run = 0; run < o->runs; run++) {
+            for (int half = 0; half < 2; half++) {
+               bool with_query = (half == 1) == (run % 2 == 0);
+               struct gb_pass one = {0};
+               GBStream *s = with_query
+                  ? [[GBStream alloc] initWithQueue:new_queue(d) depth:d encode:qenc done:qdone]
+                  : [[GBStream alloc] initWithQueue:new_queue(d) depth:d encode:benc done:nil];
+               collect = with_query;
+               stream_run(s, false, gb_now_ns(), W, 1, R, &one);
+               collect = false;
+               gb_pass_append(with_query ? &qp : &bp, &one);
+               gb_pass_free(&one);
+            }
+         }
          struct gb_result r;
          gb_result_begin(&r, o, GB_MODE_QUEUE, d, NULL);
          gb_result_run_info(&r, o->warmup_ms, o->runs, o->run_ms);
