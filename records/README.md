@@ -7,7 +7,11 @@ Each record contains `meta.json` and `results.jsonl`, following [SCHEMA.md](SCHE
 - [Neo, macOS 26.6.2 / 25G83](neo/macos/20261023-25G83/): 111 standard configurations and 98 ray-tracing configurations. Two RT pipeline configurations are unsupported by the Metal executor. The power/thermal trace spans the full combined run.
 - [M5 Pro, macOS 27.2 / 26B5086k](m5-pro/macos/20261023-26B5086k/): 82 standard configurations from `core-a`, `core-b`, `multi`, and `feat`. No RT sweep was performed. Privileged power sampling was unavailable; the metadata retains the available thermal state and records that limitation.
 
-These are macOS measurements. Linux records are intentionally absent from this initial publication.
+These are macOS measurements.
+
+## Linux records
+
+- [Neo, Aurora Fedora Remix 44 / kernel 7.3.0-neo.final, Mesa aurora-wip 81dbbce](neo/linux/20261113-7.3.0-neo.final-81dbbce/): the 18 `rt.scene` chunks of `rt/plan.txt` (61 configurations) at suite `8679dd1`, the Vulkan executor with per-resource frame-start dependencies. Mesa is a private build selected through the ICD environment, not the system Mesa. The metadata replaces the hostname with the device label and the runner's absolute paths with build names; `results.jsonl` is byte-identical to the run's output.
 
 ## Provenance
 

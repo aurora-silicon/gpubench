@@ -1,0 +1,82 @@
+{
+ "schema": "gpubench-record/1",
+ "device": "neo",
+ "os": "linux",
+ "os_version": "Aurora Fedora Remix 44",
+ "os_build": null,
+ "kernel": "7.3.0-neo.final",
+ "kernel_module": {
+  "name": "aurora",
+  "build_id": "27a7bcc17413eeff2acc500cdbea4370a0ba9120",
+  "srcversion": null,
+  "params": {}
+ },
+ "driver": {
+  "schema": "gpubench-info/1",
+  "api": "vulkan",
+  "device_name": "Apple A18 Pro (G17P B1)",
+  "driver_name": "Borealis",
+  "driver_info": "Mesa 26.3.0-devel (git-81dbbce63b), Borealis, derived from Honeykrisp",
+  "api_version": "1.4.363",
+  "driver_version": "0x6802063",
+  "vendor_id": "0x10005",
+  "device_id": "0x8140",
+  "timestamp_period_ns": 1,
+  "queue_count": 8,
+  "device_local_heap_bytes": 3917479936
+ },
+ "mesa_sha": "81dbbce",
+ "gpu": {
+  "name": "Apple A18 Pro (G17P B1)"
+ },
+ "firmware": null,
+ "date_utc": "2026-11-13T02:59:14Z",
+ "host": "neo",
+ "suite_sha": "8679dd1",
+ "runner": {
+  "chunks": "rt-scene-a,rt-scene-b,rt-scene-c,rt-pipe,rt-stamps,rt-sweep-alpha,rt-sweep-blas,rt-sweep-bounces,rt-sweep-dyn-patches,rt-sweep-instances,rt-sweep-mesh-tris,rt-sweep-moving,rt-sweep-reflective,rt-sweep-res,rt-sweep-rpp,rt-sweep-shadows,rt-sweep-tlas,rt-sweep-tmax",
+  "env": {},
+  "duration_s": 746
+ },
+ "state_before": {
+  "thermal": {
+   "thermal_zone0:macsmc-battery": 32400,
+   "thermal_zone1:cpu-e0-thermal": 56141,
+   "thermal_zone2:cpu-e1-thermal": 54832,
+   "thermal_zone3:cpu-p0-thermal": 58353,
+   "thermal_zone4:cpu-p1-thermal": 58677,
+   "thermal_zone5:cpu-p2-thermal": 56662,
+   "thermal_zone6:cpu-p3-thermal": 58851
+  },
+  "cpufreq_khz": {
+   "policy0": 744000,
+   "policy1": 1464000
+  },
+  "devfreq": {},
+  "loadavg": "2.29 0.62 0.21 1/774 4242"
+ },
+ "state_after": {
+  "thermal": {
+   "thermal_zone0:macsmc-battery": 30400,
+   "thermal_zone1:cpu-e0-thermal": 74721,
+   "thermal_zone2:cpu-e1-thermal": 77013,
+   "thermal_zone3:cpu-p0-thermal": 71939,
+   "thermal_zone4:cpu-p1-thermal": 72479,
+   "thermal_zone5:cpu-p2-thermal": 70611,
+   "thermal_zone6:cpu-p3-thermal": 72712
+  },
+  "cpufreq_khz": {
+   "policy0": 4044000,
+   "policy1": 1788000
+  },
+  "devfreq": {},
+  "loadavg": "1.10 1.04 0.72 1/669 6329"
+ },
+ "health": {
+  "gpu_log_lines": "",
+  "gpu_other_lines": "    193 aurora kernel: usb usb2-port1: config error\n    183 aurora kernel: usb usb2-port1: Cannot enable. Maybe the USB cable is bad?\n      1 aurora: G17: lifetime total 1 render groups retired on their pass record after 50 ms without completion stamps (latest: slot 8 ordinal N)",
+  "desktop_alive": null,
+  "stopped": null
+ },
+ "notes": "rt.scene executor fix (fix/vk-scene-frame-deps, suite 8679dd1). Mesa: private build of aurora-wip 81dbbce63bf (selected with VK_ICD_FILENAMES/VK_DRIVER_FILES), not the system Mesa. 20 s idle before each chunk (GB_COOLDOWN_CMD). Publication: host replaced with the device label and the runner's absolute paths with these names; results.jsonl is byte-identical to the run's."
+}

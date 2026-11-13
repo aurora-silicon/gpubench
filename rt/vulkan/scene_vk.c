@@ -253,6 +253,9 @@ static void deform(scn *s, VkCommandBuffer cb, uint32_t nslots, float t)
 
 #define AS_RW (VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR)
 #define ST_AS VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR
+/* The ray-tracing shader stage, named only when the pipeline trace runs: without the rayTracingPipeline feature
+ * a barrier may not name it (VUID-VkMemoryBarrier2-srcStageMask-07946 and its siblings). */
+#define ST_RTS(s) ((s)->p->trace_mode == RT_TRACE_PIPELINE ? VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR : 0)
 
 /* Deform all water at t = 0 and build every BLAS and the TLAS; records GPU and wall times. */
 static VkResult init_build(scn *s)
@@ -610,21 +613,39 @@ static void attachment_barriers(VkCommandBuffer cb, scn *s, int to_read)
                                      .subresourceRange = {d ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
       if (to_read) {
          b[i].srcStageMask = ast; b[i].srcAccessMask = aac;
-         b[i].dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
+         b[i].dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | ST_RTS(s);
          b[i].dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
          b[i].oldLayout = att; b[i].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
       } else {
-         /* previous frame's readers are covered by the frame-start barrier; contents are discarded */
-         b[i].srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT; b[i].srcAccessMask = 0;
+         /* Write after read: the previous frame's rt and composite passes sample these; the contents are
+          * discarded. */
+         b[i].srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | ST_RTS(s);
+         b[i].srcAccessMask = 0;
          b[i].dstStageMask = ast; b[i].dstAccessMask = aac;
          b[i].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; b[i].newLayout = att;
       }
    }
-   VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                          .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                          .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-                          .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                          .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
+   /* The frame's other dependencies on earlier frames, resource by resource, as the Metal executor's tracked
+    * resources order them:
+    *  - out (composite) and counters (rt atomics) are written every frame: compute -> compute; the census
+    *    copy reads out and writes readback: copy -> compute, copy;
+    *  - vbuf (deform) is read by raster vertex input, the BLAS refit and rt; the BLAS, the TLAS and the
+    *    scratch (refit, build) are read by rt and the previous builds: those -> compute, AS build.
+    * rt's rtimg writes follow the previous composite's reads through the attachment barriers above and the
+    * G-buffer -> rt barrier. The raster pass's vertex stage reads only host-written data, and deform's
+    * output through the barrier after deform. */
+   const int dyn = s->sc.dyn_patches > 0, as = (dyn && !s->nort) || (s->p->tlas_mode != RT_AS_STATIC && !s->nort);
+   VkMemoryBarrier2 mb = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+      .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | ST_RTS(s) |
+                      (s->census ? VK_PIPELINE_STAGE_2_COPY_BIT : 0) |
+                      (dyn ? VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT : 0) | (as ? ST_AS : 0),
+      .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | (s->census ? VK_ACCESS_2_TRANSFER_WRITE_BIT : 0) |
+                       (as ? VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR : 0),
+      .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | ST_RTS(s) |
+                      (s->census ? VK_PIPELINE_STAGE_2_COPY_BIT : 0) | (as ? ST_AS : 0),
+      .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT |
+                       (s->census ? VK_ACCESS_2_TRANSFER_WRITE_BIT : 0) | (as ? AS_RW : 0)};
    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                           .memoryBarrierCount = to_read ? 0 : 1,
                           .pMemoryBarriers = &mb,
@@ -652,7 +673,7 @@ static VkResult record_frame(void *user, uint32_t slot, uint64_t k, VkCommandBuf
       deform(s, cb, s->sc.dyn_patches, t);
       vk_barrier(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT,
                  ST_AS | VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
-                    VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                    ST_RTS(s),
                  VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT);
    }
    if (ps) vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, s->qp, q0 + 1);
@@ -663,7 +684,7 @@ static VkResult record_frame(void *user, uint32_t slot, uint64_t k, VkCommandBuf
    if (tdyn) build_tlas(s, cb, slot, 0);
    if (dyn || tdyn)
       vk_barrier(cb, ST_AS, VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
-                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | ST_RTS(s),
                  VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR);
    if (ps) vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, s->qp, q0 + 2);
 
@@ -717,7 +738,7 @@ static VkResult record_frame(void *user, uint32_t slot, uint64_t k, VkCommandBuf
       vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, s->pl_rt, 0, 1, &s->slots[slot].rt, 0, NULL);
       vkCmdDispatch(cb, (p->width + 7) / 8, (p->height + 7) / 8, 1);
    }
-   vk_barrier(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+   vk_barrier(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | ST_RTS(s),
               VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
    if (ps) vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, s->qp, q0 + 4);
 
