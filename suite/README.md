@@ -1,7 +1,7 @@
 # gpubench standard suite
 
 A small, fixed set of GPU benchmarks for the Linux driver stack (Mesa hk, the
-drm/asahi kernel driver and the GPU firmware interface), each with a Vulkan
+drm/aurora kernel driver and the GPU firmware interface), each with a Vulkan
 executor (Linux) and a Metal executor (macOS) that do the same work with the
 same dimensions and the same timing method.
 

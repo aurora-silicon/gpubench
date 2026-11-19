@@ -17,7 +17,7 @@ jobj() {
 env_json() { # driver-relevant environment
   local first=1 k
   printf '{'
-  for k in $(env | grep -E '^(VK_DRIVER_FILES|VK_ICD_FILENAMES|MESA_[A-Z0-9_]*|HK_[A-Z0-9_]*|AGX_[A-Z0-9_]*|ASAHI_[A-Z0-9_]*|GB_[A-Z0-9_]*|MTL_[A-Z0-9_]*)=' | cut -d= -f1 | sort -u); do
+  for k in $(env | grep -E '^(VK_DRIVER_FILES|VK_ICD_FILENAMES|MESA_[A-Z0-9_]*|HK_[A-Z0-9_]*|AGX_[A-Z0-9_]*|AURORA_[A-Z0-9_]*|ASAHI_[A-Z0-9_]*|GB_[A-Z0-9_]*|MTL_[A-Z0-9_]*)=' | cut -d= -f1 | sort -u); do
     [ $first = 1 ] || printf ','; first=0
     printf '"%s":%s' "$k" "$(jstr "$(printenv "$k")")"
   done

@@ -69,17 +69,18 @@ mv "$D/results.jsonl.log" "$D/log.txt" 2>/dev/null
 [ -n "${PM:-}" ] && sudo -n kill "$PM" 2>/dev/null
 S1=$(state)
 CHUNKS=$(grep -v '^[[:space:]]*#' "$PLAN" | awk 'NF >= 3 && $2 == "rt" { print $1 }' | uniq | grep -E "$RE" | awk 'BEGIN { ORS = "" } { if (NR > 1) print ","; print "\"" $1 "\"" }')
-ENVJ=$(env | grep -E '^(VK_DRIVER_FILES|VK_ICD_FILENAMES|MESA_|HK_|AGX_|ASAHI_)' | sed -e 's/"/\\"/g' -e 's/^\([^=]*\)=\(.*\)$/"\1":"\2"/' | awk 'BEGIN { ORS = "" } { if (NR > 1) print ","; print }')
+ENVJ=$(env | grep -E '^(VK_DRIVER_FILES|VK_ICD_FILENAMES|MESA_|HK_|AGX_|AURORA_|ASAHI_)' | sed -e 's/"/\\"/g' -e 's/^\([^=]*\)=\(.*\)$/"\1":"\2"/' | awk 'BEGIN { ORS = "" } { if (NR > 1) print ","; print }')
 if [ "$OS" = macos ]; then
    KMOD=null; HEALTH=null; FW=null
 else
-   # The GPU kernel module: aurora, or asahi on kernels before the rename.
+   # The GPU kernel module: aurora. LEGACY-ASAHI(2027-02-28): asahi on kernels before the rename.
+   # ASAHI_ above is the pre-rename Mesa environment prefix, same tag.
    km=aurora; [ -d /sys/module/aurora ] || km=asahi
    bid=$(modinfo -F srcversion $km 2>/dev/null); par=""
    for f in /sys/module/$km/parameters/*; do [ -r "$f" ] && par="$par${par:+,}\"$(basename "$f")\":\"$(cat "$f" 2>/dev/null)\""; done
    bidf=$(readelf -n "$(modinfo -n $km 2>/dev/null)" 2>/dev/null | awk '/Build ID/ { print $3; exit }')
    KMOD="{\"name\":\"$km\",\"build_id\":\"$bidf\",\"srcversion\":\"$bid\",\"params\":{$par}}"
-   KL=$(journalctl -k -b --since "@$T0" 2>/dev/null | grep -i -E 'aurora|asahi|agx|gpu|drm|fault|timeout' | tail -40 | esc)
+   KL=$(journalctl -k -b --since "@$T0" 2>/dev/null | grep -i -E 'aurora|agx|gpu|drm|fault|timeout' | tail -40 | esc)
    alive=false; pgrep -x Hyprland > /dev/null && alive=true
    HEALTH="{\"kernel_log\":\"$KL\",\"desktop_alive\":$alive}"
    FW=null

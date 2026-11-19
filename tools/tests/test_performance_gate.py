@@ -37,7 +37,7 @@ def metadata(os):
                       files={name: 'e' * 64 for name in ('suite-plan.txt', 'rt-plan.txt',
                               'gpubench-vk', 'gpubench-rt-vk', 'full-performance-baseline.py')})
         meta.update(date_utc='2026-10-24T00:00:00Z', kernel='test-kernel',
-                    kernel_module=dict(name='asahi', build_id=assets['module_build_id']),
+                    kernel_module=dict(name='aurora', build_id=assets['module_build_id']),
                     mesa_sha=assets['mesa_source'], mesa_sha256=assets['mesa_sha256'],
                     rt_source=assets['rt_source'], assets_manifest=assets,
                     health=dict(completed=True, desktop_alive=True, new_fault_lines=0),
@@ -185,6 +185,7 @@ class GateTests(unittest.TestCase):
             self.assertFalse(ledger['passed'])
 
     def test_both_gpu_module_names_identify_the_stack(self):
+        # LEGACY-ASAHI(2027-02-28): records from kernels before the rename name the module asahi.
         for name, eligible in (('aurora', True), ('asahi', True), ('panfrost', False)):
             with self.subTest(name=name):
                 meta = metadata('linux')

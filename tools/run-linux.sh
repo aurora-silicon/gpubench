@@ -63,7 +63,7 @@ state_json() {
   printf '},"loadavg":%s}' "$(jstr "$(cat /proc/loadavg)")"
 }
 
-module_json() { # the GPU kernel module: aurora, or asahi on kernels before the rename
+module_json() { # the GPU kernel module: aurora (LEGACY-ASAHI(2027-02-28): asahi on kernels before the rename)
   local m=/sys/module/aurora f bid="" first=1
   [ -d "$m" ] || m=/sys/module/asahi
   [ -d "$m" ] || { printf null; return; }
@@ -81,13 +81,13 @@ module_json() { # the GPU kernel module: aurora, or asahi on kernels before the 
 
 gpu_log() { # kernel log lines since the run started that point at GPU trouble
   journalctl -k --since "@$T0" --no-pager -q 2>/dev/null |
-    grep -iE 'aurora|asahi|agx|drm' | grep -iE 'GPU fault|page fault|crashed|runtime stopped|client failed|timed out|timeout|still draining|queued-failure|hang|recover' || true
+    grep -iE 'aurora|agx|drm' | grep -iE 'GPU fault|page fault|crashed|runtime stopped|client failed|timed out|timeout|still draining|queued-failure|hang|recover' || true
 }
 
 gpu_notes() { # other GPU driver lines worth keeping with the record (do not stop the run)
-  journalctl -k --since "@$T0" --no-pager -q 2>/dev/null | grep -iE 'aurora|asahi|agx' |
+  journalctl -k --since "@$T0" --no-pager -q 2>/dev/null | grep -iE 'aurora|agx' |
     grep -viE 'GPU fault|page fault|crashed|runtime stopped|client failed|timed out|timeout|still draining|queued-failure|hang|recover' |
-    sed -E 's/^.*(aurora|asahi|agx)/\1/I; s/[0-9]{4,}/N/g' | sort | uniq -c | sort -rn | head -20 || true
+    sed -E 's/^.*(aurora|agx)/\1/I; s/[0-9]{4,}/N/g' | sort | uniq -c | sort -rn | head -20 || true
 }
 
 desktop_alive() {
@@ -126,7 +126,7 @@ for c in $SEL; do
   fi
 done
 STATE_AFTER=$(state_json)
-FW=$(journalctl -k -b --no-pager -q 2>/dev/null | grep -iE '(aurora|asahi).*(firmware|fw).*version|firmware version' | tail -1 | sed 's/.*\(irmware\|fw\)[^0-9]*//I' | cut -c1-40)
+FW=$(journalctl -k -b --no-pager -q 2>/dev/null | grep -iE 'aurora.*(firmware|fw).*version|firmware version' | tail -1 | sed 's/.*\(irmware\|fw\)[^0-9]*//I' | cut -c1-40)
 OSV=$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-linux}")
 GPU_NAME=$(printf '%s' "$INFO" | sed -n 's/.*"device_name":"\([^"]*\)".*/\1/p')
 SUITE_SHA=$(cat "$BIN/SUITE_SHA" 2>/dev/null || git -C "$ROOT" describe --always --dirty=+dirty --abbrev=7 2>/dev/null || echo unknown)
