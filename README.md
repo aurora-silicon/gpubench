@@ -52,7 +52,7 @@ The optional [GL/GLES executor](suite/gl/README.md) runs matched render and comp
 - [rt/](rt/README.md): ray-tracing scenes and microbenchmarks.
 - [stress/](stress/README.md): driver stress tests with pass/fail verdicts (Linux, Vulkan).
 - [records/](records/README.md): per-device records and JSON schema.
-- `tools/`: portable builders, runners, and record comparison. `tools/performance-gate.py` is the strict full-record gate: a Linux record passes only when every comparable row beats the Neo macOS reference ([details](tools/performance-gate.md)).
+- `tools/`: portable builders, runners, and record comparison. `tools/performance-gate.py` is the strict full-record gate: a Linux record passes only when every comparable row beats the pinned macOS reference of the same device, Neo by default ([details](tools/performance-gate.md)).
 
 ## License
 

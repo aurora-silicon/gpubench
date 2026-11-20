@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-only
-"""Strict full-record Linux performance gate against Neo's recorded macOS run.
+"""Strict full-record Linux performance gate against a device's pinned macOS run.
 
-Never combines records. All 207 comparable reference rows must strictly win;
-equal, missing, failed, incompatible or malformed results block qualification.
-The two reference skips remain explicit noncomparable ledger rows.
+Each device has one pinned macOS reference record (REFERENCES); Neo is the
+default. Never combines records. Every comparable reference row must strictly
+win; equal, missing, failed, incompatible or malformed results block
+qualification. Reference skips remain explicit noncomparable ledger rows.
 """
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -17,8 +18,17 @@ import re
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-REFERENCE = ROOT / 'records/neo/macos/20261023-25G83'
-REFERENCE_SHA256 = 'cf60e2cb2810e63f53764c2f9bd3066b86e3907866763790ddb26e1c722b1270'
+# One pinned macOS reference per device. A Linux record is gated only against
+# the reference of its own device: the exact results SHA-256 and status counts
+# below. A device's entry is added together with its published macOS record.
+REFERENCES = {
+    'neo': dict(label='Neo', path='records/neo/macos/20261023-25G83',
+                results_sha256='cf60e2cb2810e63f53764c2f9bd3066b86e3907866763790ddb26e1c722b1270',
+                statuses={'ok': 207, 'skip': 2}),
+}
+DEFAULT_DEVICE = 'neo'
+REFERENCE = ROOT / REFERENCES[DEFAULT_DEVICE]['path']
+REFERENCE_SHA256 = REFERENCES[DEFAULT_DEVICE]['results_sha256']
 CONTROLS = ('warmup_ms', 'runs', 'run_ms')
 
 
@@ -161,7 +171,11 @@ class Record:
     line_count: int = 0
 
 
-def load_record(path, expected_os):
+def reference_path(device):
+    return ROOT / REFERENCES[device]['path']
+
+
+def load_record(path, expected_os, device=DEFAULT_DEVICE):
     path = Path(path).resolve()
     source = path / 'results.jsonl' if path.is_dir() else path
     record = Record(source)
@@ -200,8 +214,8 @@ def load_record(path, expected_os):
         meta = strict_json(data)
         if not isinstance(meta, dict) or meta.get('schema') != 'gpubench-record/1':
             raise ValueError('unsupported record metadata schema')
-        if meta.get('device') != 'neo' or meta.get('os') != expected_os:
-            raise ValueError(f'metadata must identify Neo/{expected_os}')
+        if meta.get('device') != device or meta.get('os') != expected_os:
+            raise ValueError(f'metadata must identify {device}/{expected_os}')
         if not isinstance(meta.get('suite_sha'), str) or not meta['suite_sha']:
             raise ValueError('metadata lacks suite_sha')
         record.provenance['metadata'] = meta
@@ -212,13 +226,16 @@ def load_record(path, expected_os):
     return record
 
 
-def reference_errors(record):
+def reference_errors(record, device=DEFAULT_DEVICE):
+    pin = REFERENCES[device]
     errors = []
-    if record.provenance.get('results_sha256') != REFERENCE_SHA256:
-        errors.append('reference does not match the pinned Neo macOS results SHA-256')
+    if record.provenance.get('results_sha256') != pin['results_sha256']:
+        errors.append(f"reference does not match the pinned {pin['label']} macOS results SHA-256")
     statuses = Counter(entry.row.get('status') for entry in record.rows.values())
-    if record.line_count != 209 or len(record.rows) != 209 or statuses != {'ok': 207, 'skip': 2}:
-        errors.append('reference must preserve exactly 209 identities: 207 ok and 2 skips')
+    total = sum(pin['statuses'].values())
+    if record.line_count != total or len(record.rows) != total or dict(statuses) != pin['statuses']:
+        counts = ' and '.join(f'{count} {status}' for status, count in sorted(pin['statuses'].items()))
+        errors.append(f'reference must preserve exactly {total} identities: {counts}')
     return errors
 
 
@@ -301,10 +318,10 @@ def qualification_errors(record):
     return errors
 
 
-def compare(linux, macos, pinned=True):
+def compare(linux, macos, pinned=True, device=DEFAULT_DEVICE):
     errors = [f'linux: {error}' for error in linux.errors] + [f'macos: {error}' for error in macos.errors]
     if pinned:
-        errors += reference_errors(macos)
+        errors += reference_errors(macos, device)
     rows = []
     for row_key, reference in macos.rows.items():
         candidate = linux.rows.get(row_key)
@@ -368,7 +385,8 @@ def compare(linux, macos, pinned=True):
     comparison_passed = not errors and comparable > 0 and counts['win'] == comparable and blocked == 0
     eligibility = qualification_errors(linux) + [f'macos: {error}' for error in macos.metadata_errors]
     eligible = not eligibility
-    return dict(schema='gpubench-performance-gate/1', passed=comparison_passed and eligible,
+    return dict(schema='gpubench-performance-gate/1', device=device, reference_label=REFERENCES[device]['label'],
+                passed=comparison_passed and eligible,
                 comparison_passed=comparison_passed, qualification_eligible=eligible,
                 qualification_scope='Eligibility of this supplied benchmark record; no live hardware or sustained-stress qualification.',
                 generator=dict(path=str(Path(__file__).resolve()), sha256=sha(Path(__file__).read_bytes())),
@@ -382,7 +400,7 @@ def compare(linux, macos, pinned=True):
                             wins=counts['win'], blocked_rows=blocked, errors=len(errors),
                             eligibility_errors=len(eligibility), outcomes=dict(counts)),
                 provenance=dict(linux=linux.provenance, macos=macos.provenance,
-                                pinned_reference_sha256=REFERENCE_SHA256 if pinned else None),
+                                pinned_reference_sha256=REFERENCES[device]['results_sha256'] if pinned else None),
                 errors=errors, eligibility_errors=eligibility, rows=rows)
 
 
@@ -396,7 +414,7 @@ def cell(value):
 
 def markdown(ledger):
     count = ledger['counts']
-    lines = ['# Neo performance gate', '', '**' + ('PASS' if ledger['passed'] else 'BLOCKED') + '**', '',
+    lines = [f"# {ledger['reference_label']} performance gate", '', '**' + ('PASS' if ledger['passed'] else 'BLOCKED') + '**', '',
              ledger['requirement'], '', ledger['scope'], '',
              f"Raw comparison passed: {ledger['comparison_passed']}; record eligible: {ledger['qualification_eligible']}.", '',
              ledger['qualification_scope'], '',
@@ -431,10 +449,16 @@ def markdown(ledger):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('linux', type=Path, help='One current Linux record directory or results.jsonl')
-    parser.add_argument('--macos', type=Path, default=REFERENCE, help='Exact pinned macOS record or a byte-identical copy')
+    parser.add_argument('--device', choices=sorted(REFERENCES), default=DEFAULT_DEVICE,
+                        help=f'Device whose pinned macOS reference gates the record (default {DEFAULT_DEVICE}); '
+                             'the Linux record must name the same device')
+    parser.add_argument('--macos', type=Path, default=None,
+                        help="Exact pinned macOS record of --device or a byte-identical copy (default: the device's pinned record)")
     parser.add_argument('--out', type=Path, required=True, help='Output prefix for .json and .md ledgers')
     args = parser.parse_args(argv)
-    ledger = compare(load_record(args.linux, 'linux'), load_record(args.macos, 'macos'))
+    macos_path = args.macos if args.macos is not None else reference_path(args.device)
+    ledger = compare(load_record(args.linux, 'linux', args.device), load_record(macos_path, 'macos', args.device),
+                     device=args.device)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     json_path = Path(str(args.out) + '.json')
     md_path = Path(str(args.out) + '.md')
