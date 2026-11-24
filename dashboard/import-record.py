@@ -74,6 +74,9 @@ def import_run(args):
     if not mesa and os_name == "linux":
         commit = re.search(r"\bgit-([a-f0-9]{7,40})\b", (driver.get("driver_info") or "") + " " + (driver.get("version") or ""))
         mesa = commit[1] if commit else None
+    suite = meta.get("suite_sha")
+    if suite == "unknown":
+        suite = None
     return {
         "id": f"{device}/{api}/{date}",
         "device": device,
@@ -83,7 +86,7 @@ def import_run(args):
         "osVersion": meta.get("os_version"),
         "build": meta.get("os_build") if os_name == "macos" else meta.get("kernel"),
         "mesa": mesa,
-        "suite": meta.get("suite_sha"),
+        "suite": suite,
         "sha256": hashlib.sha256(results).hexdigest(),
         "source": args.source,
         "note": args.note,
