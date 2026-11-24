@@ -73,6 +73,7 @@ test("workload families stay grouped across API lanes", () => {
   assert.equal(benchmarkGroup(result(10, { test: "compute.conv2d" })), "heavy-compute");
   assert.equal(benchmarkGroup(result(10, { lane: "rt", test: "rt.asbuild" })), "rays");
   assert.equal(benchmarkGroup(result(10, { test: "transfer.ops" })), "memory");
+  assert.equal(benchmarkGroup(result(10, { lane: "games", test: "games.godot" })), "games");
 });
 
 test("group curation respects filtered cases and keeps different APIs and metrics separate", () => {

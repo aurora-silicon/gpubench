@@ -1,5 +1,5 @@
 import { buildComparisons, canCompare, compatible, geometricMeanRatio, metalPipelineUnsupported, relative, workloadKey } from "./comparison.js?v=6";
-import { BENCHMARK_GROUPS, benchmarkGroup, selectChartCases } from "./groups.js?v=6";
+import { BENCHMARK_GROUPS, benchmarkGroup, selectChartCases } from "./groups.js?v=7";
 
 const DEVICES = [
   { id: "neo", name: "A18 Pro", model: "MacBook Neo" },
@@ -33,6 +33,11 @@ const TEST_NAMES = {
   query: "Query overhead",
   "rt.scene": "Ray-tracing scene",
   "compile.pso": "Pipeline compilation",
+  "games.vkquake": "vkQuake 1.37",
+  "games.supertuxkart": "SuperTuxKart 1.5",
+  "games.godot": "Godot 4.7.2",
+  "games.xonotic": "Xonotic 0.8.6",
+  "games.heaven": "Unigine Heaven 4.0",
 };
 const METRIC_NAMES = {
   us_per_submit: "Submission time",

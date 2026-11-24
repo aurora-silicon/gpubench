@@ -68,10 +68,23 @@ export const BENCHMARK_GROUPS = [
       ["Host signaling", "sync.signal", 1, { kind: "host" }],
     ],
   },
+  {
+    id: "games", title: "Games & 3D engines",
+    cases: [
+      ["vkQuake 1.37", "games.vkquake", 1, { arch: "arm64", res: "1280x720" }, "benchmark"],
+      ["SuperTuxKart 1.5", "games.supertuxkart", 1, { res: "1280x720" }, "benchmark"],
+      ["Godot 4.7.2 Forward+", "games.godot", 1, { method: "forward_plus", res: "1280x720" }, "benchmark"],
+      ["Godot 4.7.2 Mobile", "games.godot", 1, { method: "mobile", res: "1280x720" }, "benchmark"],
+      ["Godot 4.7.2 Compat", "games.godot", 1, { method: "gl_compatibility", res: "1280x720" }, "benchmark"],
+      ["Xonotic 0.8.6 Ultra", "games.xonotic", 1, { preset: "ultra", res: "1280x720" }, "benchmark"],
+      ["Unigine Heaven 4.0", "games.heaven", 1, { res: "1280x720" }, "benchmark"],
+    ],
+  },
   { id: "other", title: "Other benchmarks", cases: [] },
 ];
 
 export function benchmarkGroup(row) {
+  if (row.lane === "games" || row.test.startsWith("games.")) return "games";
   if (row.lane === "rt" || row.test.startsWith("rt.")) return "rays";
   const family = row.test.split(".")[0];
   if (family === "render") return row.test === "render.light" ? "light-render" : "heavy-render";
