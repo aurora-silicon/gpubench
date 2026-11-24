@@ -4,7 +4,7 @@
 # bash 3.2, no python, no developer tools needed).
 #
 #   run-macos.sh [--device NAME] [--chunks a,b] [--tests t1,t2] [--out-root DIR]
-#                [--bin DIR] [--note TEXT]
+#                [--bin DIR] [--note TEXT] [--plans "P1 P2"]
 #
 # When `sudo -n` works, powermetrics samples GPU clocks and thermal state once
 # per second for the whole run (powermetrics.txt in the record).
@@ -13,7 +13,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
 . "$HERE/lib-meta.sh"
 DEVICE=$(hostname -s 2>/dev/null || echo mac); CHUNKS=""; TESTS=""; OUTROOT="$ROOT/records"
-BIN="$ROOT/bin/macos"; NOTE=""
+BIN="$ROOT/bin/macos"; NOTE=""; PLANS_ARG=""; PLANS_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --device) DEVICE=$2; shift 2;;
@@ -22,9 +22,25 @@ while [ $# -gt 0 ]; do
     --out-root) OUTROOT=$2; shift 2;;
     --bin) BIN=$2; shift 2;;
     --note) NOTE=$2; shift 2;;
+    --plans) PLANS_SET=1; PLANS_ARG=$2; shift 2;;
     *) echo "run-macos.sh: unknown argument $1" >&2; exit 2;;
   esac
 done
+# --plans picks the plan files (relative paths are taken from the repository root);
+# the default is the standard plan plus the RT plan.
+if [ "$PLANS_SET" = 1 ]; then
+  PLANS=""
+  set -f
+  for p in $PLANS_ARG; do
+    case "$p" in /*) ;; *) p="$ROOT/$p";; esac
+    [ -f "$p" ] || { echo "no plan $p" >&2; exit 2; }
+    PLANS="${PLANS:+$PLANS }$p"
+  done
+  set +f
+  [ -n "$PLANS" ] || { echo "run-macos.sh: --plans requires at least one plan" >&2; exit 2; }
+else
+  PLANS="$ROOT/suite/plan.txt"; [ -f "$ROOT/rt/plan.txt" ] && PLANS="$PLANS $ROOT/rt/plan.txt"
+fi
 EXE="$BIN/gpubench-mtl"
 [ -x "$EXE" ] || { echo "no $EXE" >&2; exit 2; }
 INFO=$("$EXE" --info 2>/dev/null) || { echo "gpubench-mtl --info failed" >&2; exit 3; }
@@ -52,8 +68,7 @@ if sudo -n true 2>/dev/null; then
   PM_PID=$!
 fi
 echo "record: $REC"
-PLANS="$ROOT/suite/plan.txt"; [ -f "$ROOT/rt/plan.txt" ] && PLANS="$PLANS $ROOT/rt/plan.txt"
-ALL=$(cat $PLANS | awk '$1 !~ /^#/ && NF >= 3 {print $1}' | awk '!seen[$0]++')
+ALL=$(set -f; cat $PLANS | awk '$1 !~ /^#/ && NF >= 3 {print $1}' | awk '!seen[$0]++')
 if [ -n "$CHUNKS" ]; then SEL=$(echo "$CHUNKS" | tr ',' ' '); else SEL=$ALL; fi
 OK_PREV=-1
 for c in $SEL; do
@@ -75,6 +90,6 @@ jobj schema '"gpubench-record/1"' device "$(jstr "$DEVICE")" os '"macos"' \
   os_version "$(jstr "$(sw_vers -productVersion)")" os_build "$(jstr "$BUILD")" kernel "$(jstr "$(uname -v)")" \
   kernel_module null driver "$INFO" mesa_sha null gpu "$(jobj name "$(jstr "$GPU_NAME")")" firmware null \
   date_utc "$(jstr "$START_ISO")" host "$(jstr "$(hostname)")" suite_sha "$(jstr "$SUITE_SHA")" \
-  runner "$(jobj chunks "$(jstr "$(echo $SEL | tr ' ' ',')")" env "$(env_json)" duration_s "$(( $(date +%s) - T0 ))")" \
+  runner "$(jobj plans "$(jstr "$(set -f; for p in $PLANS; do printf '%s ' "${p#$ROOT/}"; done | sed 's/ $//')")" chunks "$(jstr "$(echo $SEL | tr ' ' ',')")" env "$(env_json)" duration_s "$(( $(date +%s) - T0 ))")" \
   state_before "$STATE_BEFORE" state_after "$STATE_AFTER" health null notes "$(jstr "$NOTE")" > "$REC/meta.json"
 echo "$(date +%T) done: $(wc -l < "$REC/results.jsonl" | tr -d ' ') results in $REC"
