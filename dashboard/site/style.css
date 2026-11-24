@@ -351,6 +351,7 @@ th:first-child, td:first-child { padding-left: 20px; font-family: var(--sans); }
 .chart-m4-mini { --chip-tone: var(--gl-zink); }
 .chart-j775c { --chip-tone: var(--chart-j775c); }
 .chart-j613 { --chip-tone: var(--chart-j613); }
+.chart-j616c { --chip-tone: var(--metal-lead); }
 .exact-tie { color: var(--metal); }
 
 .workload-overview {

@@ -14,6 +14,7 @@ const DEVICES = [
   { id: "j700", name: "A18 Pro (lab)", model: "MacBook Neo (Aurora lab)" },
   { id: "j775c", name: "M5 Max", model: "Mac Studio" },
   { id: "j613", name: "M3", model: "MacBook Air 13-inch (J613)" },
+  { id: "j616c", name: "M4 Max (32-core)", model: "MacBook Pro (J616C)" },
 ];
 const APIS = [
   { id: "vulkan", name: "Vulkan", platform: "Linux" },
