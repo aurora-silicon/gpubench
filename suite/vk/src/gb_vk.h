@@ -66,6 +66,7 @@ struct gb_vk {
    bool has_draw_indirect_count;
    bool has_descriptor_indexing;
    bool has_float16;
+   bool has_8bit_storage;
    bool has_buffer_device_address;
    bool has_descriptor_buffer;
    bool has_subgroup_ballot;

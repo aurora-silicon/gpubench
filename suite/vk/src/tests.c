@@ -1384,6 +1384,12 @@ const struct gb_test gb_tests[] = {
    {"compute.fp16", gb_run_compute_fp16},
    {"transfer.ops", gb_run_transfer_ops},
    {"render.postfx", gb_run_render_postfx},
+   /* Wave-3 AGX3 / M4-M5 compute & MSAA benchmarks */
+   {"compute.blur_fp32", gb_run_compute_blur_fp32},
+   {"compute.corner_ring", gb_run_compute_corner_ring},
+   {"compute.desc_search", gb_run_compute_desc_search},
+   {"compute.chain", gb_run_compute_chain},
+   {"render.msaa_merge", gb_run_render_msaa_merge},
    {NULL, NULL},
 };
 

@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+
+// compute.desc_search: Nested-loop 32-dim vec4 feature descriptor search over
+// a 2D padded candidate atlas. Exercises nested read-only loop-invariant vec4
+// loads under a runtime guard (Phase 2 LICM + guarded merge-phi scalarization)
+// and signed nonnegative idiv/imod 2D atlas indexing in bottom-tested loops.
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Queries { vec4 queries[]; };
+layout(std430, set = 0, binding = 1) readonly buffer Cands   { vec4 cands[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Weights { vec4 weights[]; };
+layout(std430, set = 0, binding = 3) writeonly buffer Out    { uint out_res[]; };
+
+layout(push_constant) uniform PC {
+   int num_queries;
+   int num_cands;
+   int stride;
+   int flags;
+} pc;
+
+void main()
+{
+   int q = int(gl_GlobalInvocationID.x);
+   if (q >= pc.num_queries)
+      return;
+
+   int q_base = q * 8;
+   int w_base = (q & 15) * 8;
+   int atlas_pitch = pc.stride + 4;
+   int nblocks = pc.num_cands / 16;
+
+   float best_dist = 1e9;
+   int best_id = 0;
+
+   for (int blk = 0; blk < nblocks; blk++) {
+      int j = 0;
+      do {
+         int cand_id = blk * 16 + j;
+         int row = cand_id / pc.stride;
+         int col = cand_id % pc.stride;
+         int c_base = (row * atlas_pitch + col) * 8;
+
+         float dist = 0.0;
+         for (int k = 0; k < 8; k++) {
+            vec4 qv = queries[q_base + k];
+            vec4 wv = vec4(1.0);
+            if ((pc.flags & 1) != 0) {
+               wv = weights[w_base + k];
+            }
+            vec4 cv = cands[c_base + k];
+            vec4 d = (qv - cv) * wv;
+            dist = fma(d.x, d.x, dist);
+            dist = fma(d.y, d.y, dist);
+            dist = fma(d.z, d.z, dist);
+            dist = fma(d.w, d.w, dist);
+         }
+
+         if (dist < best_dist) {
+            best_dist = dist;
+            best_id = cand_id;
+         }
+         j++;
+      } while (j < 16);
+   }
+
+   out_res[q] = (uint(best_id) & 0xffffu) | ((uint(best_dist) & 0xffffu) << 16u);
+}

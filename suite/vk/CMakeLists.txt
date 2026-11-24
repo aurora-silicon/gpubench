@@ -28,7 +28,8 @@ set(GB_SHADERS
   cull_mdi.comp cull_mdi.vert cull_mdi.frag
   bubo.vert bubo.frag
   fp16_gemv.comp fp16_alumix.comp
-  postfx_scene.vert postfx_scene.frag postfx_down.frag postfx_up.frag postfx_tonemap.frag)
+  postfx_scene.vert postfx_scene.frag postfx_down.frag postfx_up.frag postfx_tonemap.frag
+  blur_fp32_h.comp blur_fp32_v.comp corner_ring.comp desc_search.comp chain_step.comp msaa_merge.frag)
 set(spv_files)
 foreach(s IN LISTS GB_SHADERS)
   set(out ${CMAKE_CURRENT_BINARY_DIR}/spv/${s}.spv)
@@ -43,7 +44,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/shaders.c
           -P ${GB_SHADER_DIR}/embed.cmake
   DEPENDS ${spv_files} ${GB_SHADER_DIR}/embed.cmake VERBATIM)
 
-add_executable(gpubench-vk src/main.c src/tests.c src/tests_wave1.c src/tests_wave2.c src/gb_wave1_ref.c src/gb_wave2_ref.c ${CMAKE_CURRENT_BINARY_DIR}/shaders.c)
+add_executable(gpubench-vk src/main.c src/tests.c src/tests_wave1.c src/tests_wave2.c src/tests_wave3.c src/gb_wave1_ref.c src/gb_wave2_ref.c src/gb_wave3_ref.c ${CMAKE_CURRENT_BINARY_DIR}/shaders.c)
 target_include_directories(gpubench-vk PRIVATE src)
 target_compile_options(gpubench-vk PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 target_compile_definitions(gpubench-vk PRIVATE GB_SUITE_SHA="${GB_SUITE_SHA}")

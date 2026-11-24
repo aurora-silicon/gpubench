@@ -1,0 +1,132 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+// compute.corner_ring: 16-tap radius-3 circular stencil corner detector (FAST-9/16)
+// with compass early-reject branches, contiguous-arc corner score, and optional
+// 8-tap inner radius-2 ring contrast refinement (DENSE_RING=1).
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(constant_id = 0) const uint DENSE_RING = 0u;
+
+layout(std430, set = 0, binding = 0) readonly buffer Src { uint8_t src[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Dst { uint dst[]; };
+layout(push_constant) uniform PC { int w; int h; int thresh; } pc;
+
+const ivec2 RING16[16] = ivec2[16](
+   ivec2( 0, -3), ivec2( 1, -3), ivec2( 2, -2), ivec2( 3, -1),
+   ivec2( 3,  0), ivec2( 3,  1), ivec2( 2,  2), ivec2( 1,  3),
+   ivec2( 0,  3), ivec2(-1,  3), ivec2(-2,  2), ivec2(-3,  1),
+   ivec2(-3,  0), ivec2(-3, -1), ivec2(-2, -2), ivec2(-1, -3)
+);
+
+const ivec2 RING8[8] = ivec2[8](
+   ivec2( 0, -2), ivec2( 2, -2), ivec2( 2,  0), ivec2( 2,  2),
+   ivec2( 0,  2), ivec2(-2,  2), ivec2(-2,  0), ivec2(-2, -2)
+);
+
+int load_px(int x, int y)
+{
+   return int(uint(src[y * pc.w + x]));
+}
+
+void main()
+{
+   int x = int(gl_GlobalInvocationID.x);
+   int y = int(gl_GlobalInvocationID.y);
+   if (x >= pc.w || y >= pc.h)
+      return;
+   int out_idx = y * pc.w + x;
+   if (x < 3 || y < 3 || x >= pc.w - 3 || y >= pc.h - 3) {
+      dst[out_idx] = 0u;
+      return;
+   }
+
+   int c = load_px(x, y);
+   int hi = c + pc.thresh;
+   int lo = c - pc.thresh;
+
+   int p0  = load_px(x + RING16[0].x,  y + RING16[0].y);
+   int p4  = load_px(x + RING16[4].x,  y + RING16[4].y);
+   int p8  = load_px(x + RING16[8].x,  y + RING16[8].y);
+   int p12 = load_px(x + RING16[12].x, y + RING16[12].y);
+
+   if (DENSE_RING == 0u) {
+      int cb = int(p0 > hi) + int(p4 > hi) + int(p8 > hi) + int(p12 > hi);
+      int cd = int(p0 < lo) + int(p4 < lo) + int(p8 < lo) + int(p12 < lo);
+      if (cb < 3 && cd < 3) {
+         dst[out_idx] = 0u;
+         return;
+      }
+   }
+
+   int r[16];
+   r[0]  = p0;
+   r[1]  = load_px(x + RING16[1].x,  y + RING16[1].y);
+   r[2]  = load_px(x + RING16[2].x,  y + RING16[2].y);
+   r[3]  = load_px(x + RING16[3].x,  y + RING16[3].y);
+   r[4]  = p4;
+   r[5]  = load_px(x + RING16[5].x,  y + RING16[5].y);
+   r[6]  = load_px(x + RING16[6].x,  y + RING16[6].y);
+   r[7]  = load_px(x + RING16[7].x,  y + RING16[7].y);
+   r[8]  = p8;
+   r[9]  = load_px(x + RING16[9].x,  y + RING16[9].y);
+   r[10] = load_px(x + RING16[10].x, y + RING16[10].y);
+   r[11] = load_px(x + RING16[11].x, y + RING16[11].y);
+   r[12] = p12;
+   r[13] = load_px(x + RING16[13].x, y + RING16[13].y);
+   r[14] = load_px(x + RING16[14].x, y + RING16[14].y);
+   r[15] = load_px(x + RING16[15].x, y + RING16[15].y);
+
+   int run_b = 0, max_b = 0;
+   int run_d = 0, max_d = 0;
+   for (int i = 0; i < 24; i++) {
+      int v = r[i & 15];
+      run_b = (v > hi) ? (run_b + 1) : 0;
+      run_d = (v < lo) ? (run_d + 1) : 0;
+      max_b = max(max_b, run_b);
+      max_d = max(max_d, run_d);
+   }
+
+   int score = 0;
+   if (max_b >= 9) {
+      int best_b = 0;
+      for (int k = 0; k < 16; k++) {
+         int m = 255;
+         for (int j = 0; j < 9; j++) {
+            m = min(m, r[(k + j) & 15] - c);
+         }
+         best_b = max(best_b, m);
+      }
+      score = max(score, best_b);
+   }
+   if (max_d >= 9) {
+      int best_d = 0;
+      for (int k = 0; k < 16; k++) {
+         int m = 255;
+         for (int j = 0; j < 9; j++) {
+            m = min(m, c - r[(k + j) & 15]);
+         }
+         best_d = max(best_d, m);
+      }
+      score = max(score, best_d);
+   }
+
+   if (DENSE_RING != 0u) {
+      int compass_contrast = abs(p0 - p8) + abs(p4 - p12);
+      if (score > 0 || compass_contrast > pc.thresh * 2) {
+         int in8[8];
+         for (int j = 0; j < 8; j++)
+            in8[j] = load_px(x + RING8[j].x, y + RING8[j].y);
+         int dc = abs(in8[0] - in8[4]) + abs(in8[1] - in8[5]) +
+                  abs(in8[2] - in8[6]) + abs(in8[3] - in8[7]);
+         int rg = 0;
+         for (int j = 0; j < 8; j++)
+            rg += abs(in8[j] - c);
+         int refine = clamp(dc + (rg >> 2), 0, 1023);
+         score = score * 16 + refine;
+      }
+   }
+
+   dst[out_idx] = uint(max(score, 0));
+}

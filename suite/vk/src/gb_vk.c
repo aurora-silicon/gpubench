@@ -191,6 +191,7 @@ gb_vk_create(struct gb_vk *vk, int device_index, int nqueues)
    vk->has_descriptor_indexing =
       f12.descriptorIndexing && f12.runtimeDescriptorArray && f12.shaderSampledImageArrayNonUniformIndexing;
    vk->has_float16 = f12.shaderFloat16;
+   vk->has_8bit_storage = f12.storageBuffer8BitAccess && f12.shaderInt8;
    vk->has_buffer_device_address = f12.bufferDeviceAddress;
 #ifdef VK_EXT_descriptor_buffer
    vk->has_descriptor_buffer = ext_desc_buf && fdb.descriptorBuffer && vk->has_buffer_device_address;
@@ -212,6 +213,8 @@ gb_vk_create(struct gb_vk *vk, int device_index, int nqueues)
       .shaderUniformBufferArrayNonUniformIndexing =
          (vk->has_descriptor_indexing && f12.shaderUniformBufferArrayNonUniformIndexing) ? VK_TRUE : VK_FALSE,
       .shaderFloat16 = vk->has_float16 ? VK_TRUE : VK_FALSE,
+      .storageBuffer8BitAccess = vk->has_8bit_storage ? VK_TRUE : VK_FALSE,
+      .shaderInt8 = vk->has_8bit_storage ? VK_TRUE : VK_FALSE,
       .bufferDeviceAddress = vk->has_buffer_device_address ? VK_TRUE : VK_FALSE,
    };
    VkPhysicalDeviceVulkan11Features e11 = {

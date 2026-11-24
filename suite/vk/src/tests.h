@@ -30,3 +30,10 @@ int gb_run_render_bindless_ubo(const struct gb_opts *o);
 int gb_run_compute_fp16(const struct gb_opts *o);
 int gb_run_transfer_ops(const struct gb_opts *o);
 int gb_run_render_postfx(const struct gb_opts *o);
+
+/* Wave-3 AGX3 / M4-M5 compute & MSAA Vulkan benchmarks (tests_wave3.c). */
+int gb_run_compute_blur_fp32(const struct gb_opts *o);
+int gb_run_compute_corner_ring(const struct gb_opts *o);
+int gb_run_compute_desc_search(const struct gb_opts *o);
+int gb_run_compute_chain(const struct gb_opts *o);
+int gb_run_render_msaa_merge(const struct gb_opts *o);

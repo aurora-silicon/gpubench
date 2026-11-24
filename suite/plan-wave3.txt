@@ -1,0 +1,32 @@
+# gpubench Wave-3 AGX3 / M4-M5 compute & MSAA plan (Vulkan).
+# Run via: tools/run-suite.sh --api vk --bin build/bin --out <dir> --plans suite/plan-wave3.txt
+# Kept separate from suite/plan.txt so the existing 209-row performance-gate.py
+# reference remains untouched.
+#
+# chunk      lane   test                 arguments
+
+# 1. Direct-global uint8_t RGBA8 -> FP32 separable blur (W8 narrowing, g64 cliff, ALU ILP)
+w3-comp      suite  compute.blur_fp32    --depths 1,4 --param taps=9 --param res=1080p
+w3-comp      suite  compute.blur_fp32    --depths 1,4 --param taps=17 --param res=1080p
+w3-comp      suite  compute.blur_fp32    --depths 1,4 --param taps=17 --param res=1440p
+
+# 2. 16-tap radius-3 circular stencil corner detector (branching g64 tier, scoreboard, W8 pack)
+w3-comp      suite  compute.corner_ring  --depths 1,4 --param mode=fast16 --param res=1080p
+w3-comp      suite  compute.corner_ring  --depths 1,4 --param mode=dense_ring --param res=1080p
+
+# 3. Nested-loop vec4 descriptor search (Phase 2 nested LICM + guarded merge phis + idiv/imod)
+w3-comp      suite  compute.desc_search  --depths 1,4 --param queries=8192 --param cands=256 --param stride=24
+w3-comp      suite  compute.desc_search  --depths 1,4 --param queries=16384 --param cands=512 --param stride=36
+
+# 4. Back-to-back dependent compute dispatch chain (CDM barrier elision, submit-pack, IRQ latency)
+w3-chain     suite  compute.chain        --depths 1,4 --param mode=single_cb --param passes=16 --param size=small
+w3-chain     suite  compute.chain        --depths 1,4 --param mode=single_cb --param passes=64 --param size=small
+w3-chain     suite  compute.chain        --depths 1,4 --param mode=single_cb --param passes=32 --param size=medium
+w3-chain     suite  compute.chain        --depths 1,4 --param mode=split_submits --param passes=8 --param size=small
+w3-chain     suite  compute.chain        --depths 1,4 --param mode=split_submits --param passes=16 --param size=small
+
+# 5. Multi-pass 2x/4x MSAA color-compressed render target merge (RGBA8 4B/s & RGBA16F 8B/s)
+w3-msaa      suite  render.msaa_merge    --depths 1,4 --param samples=2 --param fmt=rgba8 --param passes=4 --param res=1080p
+w3-msaa      suite  render.msaa_merge    --depths 1,4 --param samples=4 --param fmt=rgba8 --param passes=4 --param res=1080p
+w3-msaa      suite  render.msaa_merge    --depths 1,4 --param samples=4 --param fmt=rgba16f --param passes=4 --param res=1080p
+w3-msaa      suite  render.msaa_merge    --depths 1,4 --param samples=4 --param fmt=rgba8 --param passes=4 --param res=1440p

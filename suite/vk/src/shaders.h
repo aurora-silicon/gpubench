@@ -57,6 +57,13 @@ GB_SHADER(postfx_scene_frag)
 GB_SHADER(postfx_down_frag)
 GB_SHADER(postfx_up_frag)
 GB_SHADER(postfx_tonemap_frag)
+/* Wave-3 shaders */
+GB_SHADER(blur_fp32_h_comp)
+GB_SHADER(blur_fp32_v_comp)
+GB_SHADER(corner_ring_comp)
+GB_SHADER(desc_search_comp)
+GB_SHADER(chain_step_comp)
+GB_SHADER(msaa_merge_frag)
 #undef GB_SHADER
 
 #define GB_SPV(n) n, n##_size

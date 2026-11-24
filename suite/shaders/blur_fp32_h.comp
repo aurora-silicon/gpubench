@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+#extension GL_EXT_shader_8bit_storage : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
+
+// compute.blur_fp32 Pass 1 (Horizontal separable FP32 RGBA8 blur, 2 pixels/thread)
+// Direct global uint8_t RGBA8 loads -> FP32 vec4 FMA accumulation with exact
+// dyadic weights summing to 65536.0 (bit-exact across all IEEE-754 GPUs).
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(constant_id = 0) const uint TAPS = 17u;
+
+layout(std430, set = 0, binding = 0) readonly buffer Src { uint8_t src[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Dst { uint8_t dst[]; };
+layout(push_constant) uniform PC { int w; int h; } pc;
+
+const float W9[9] = float[9](
+   1024.0, 3072.0, 7168.0, 12288.0, 18432.0, 12288.0, 7168.0, 3072.0, 1024.0
+);
+
+const float W17[17] = float[17](
+   16.0, 86.0, 342.0, 1052.0, 2554.0, 4996.0, 7914.0, 10242.0,
+   11132.0,
+   10242.0, 7914.0, 4996.0, 2554.0, 1052.0, 342.0, 86.0, 16.0
+);
+
+vec4 load_rgba(int x, int y)
+{
+   int cx = clamp(x, 0, pc.w - 1);
+   int off = (y * pc.w + cx) * 4;
+   return vec4(float(uint(src[off + 0])),
+               float(uint(src[off + 1])),
+               float(uint(src[off + 2])),
+               float(uint(src[off + 3])));
+}
+
+void store_rgba(int x, int y, vec4 acc)
+{
+   vec4 scaled = (acc + vec4(32768.0)) * (1.0 / 65536.0);
+   uvec4 u = clamp(uvec4(scaled), uvec4(0u), uvec4(255u));
+   int off = (y * pc.w + x) * 4;
+   dst[off + 0] = uint8_t(u.r);
+   dst[off + 1] = uint8_t(u.g);
+   dst[off + 2] = uint8_t(u.b);
+   dst[off + 3] = uint8_t(u.a);
+}
+
+void main()
+{
+   int x0 = int(gl_GlobalInvocationID.x) * 2;
+   int y = int(gl_GlobalInvocationID.y);
+   if (x0 >= pc.w || y >= pc.h)
+      return;
+
+   vec4 acc0a = vec4(0.0);
+   vec4 acc0b = vec4(0.0);
+   vec4 acc1a = vec4(0.0);
+   vec4 acc1b = vec4(0.0);
+
+   if (TAPS == 9u) {
+      vec4 p0 = load_rgba(x0 - 4, y);
+      acc0a = fma(p0, vec4(W9[0]), acc0a);
+      for (int k = 1; k < 9; k++) {
+         vec4 p = load_rgba(x0 + k - 4, y);
+         if ((k & 1) == 0) {
+            acc0a = fma(p, vec4(W9[k]), acc0a);
+            acc1a = fma(p, vec4(W9[k - 1]), acc1a);
+         } else {
+            acc0b = fma(p, vec4(W9[k]), acc0b);
+            acc1b = fma(p, vec4(W9[k - 1]), acc1b);
+         }
+      }
+      vec4 pe = load_rgba(x0 + 5, y);
+      acc1b = fma(pe, vec4(W9[8]), acc1b);
+   } else {
+      vec4 p0 = load_rgba(x0 - 8, y);
+      acc0a = fma(p0, vec4(W17[0]), acc0a);
+      for (int k = 1; k < 17; k++) {
+         vec4 p = load_rgba(x0 + k - 8, y);
+         if ((k & 1) == 0) {
+            acc0a = fma(p, vec4(W17[k]), acc0a);
+            acc1a = fma(p, vec4(W17[k - 1]), acc1a);
+         } else {
+            acc0b = fma(p, vec4(W17[k]), acc0b);
+            acc1b = fma(p, vec4(W17[k - 1]), acc1b);
+         }
+      }
+      vec4 pe = load_rgba(x0 + 9, y);
+      acc1b = fma(pe, vec4(W17[16]), acc1b);
+   }
+
+   store_rgba(x0, y, acc0a + acc0b);
+   if (x0 + 1 < pc.w)
+      store_rgba(x0 + 1, y, acc1a + acc1b);
+}

@@ -89,3 +89,12 @@
 
 #define GB_POSTFX_QUADS 4096u            /* render.postfx: 64x64 HDR scene quads */
 #define GB_POSTFX_BLOOM_MIPS 5u          /* 5-level bloom pyramid (res/2 .. res/32) */
+
+/* ---- Wave-3 AGX3 / M4-M5 compute & MSAA workload dimensions ---- */
+#define GB_BLUR_LOCAL 16u                /* compute.blur_fp32: 16x16 workgroup, 2 pix/thread */
+#define GB_CORNER_LOCAL 16u              /* compute.corner_ring: 16x16 workgroup */
+#define GB_DESC_LOCAL 64u                /* compute.desc_search: 64 threads/workgroup */
+#define GB_DESC_DIMS 32u                 /* 32-dim (8x vec4) feature descriptors */
+#define GB_CHAIN_LOCAL 64u               /* compute.chain: 64 threads/workgroup */
+#define GB_CHAIN_SMALL_WORDS 1024u       /* compute.chain size=small (16 workgroups) */
+#define GB_CHAIN_MED_WORDS 16384u        /* compute.chain size=medium (256 workgroups) */

@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+
+// compute.chain: Lightweight ping-pong dependent compute pass.
+// Chained N times with COMPUTE->COMPUTE barriers (single_cb) or separate
+// queue submissions (split_submits) to isolate CDM barrier handling,
+// compute-pair coalescing, and kernel completion/IRQ latency.
+layout(local_size_x = 64) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Src { uint src[]; };
+layout(std430, set = 0, binding = 1) writeonly buffer Dst { uint dst[]; };
+layout(push_constant) uniform PC { uint count; uint mask; uint salt; } pc;
+
+void main()
+{
+   uint id = gl_GlobalInvocationID.x;
+   if (id >= pc.count)
+      return;
+   uint a = src[id];
+   uint b = src[(id + 1u) & pc.mask];
+   uint c = src[(id + 7u) & pc.mask];
+   dst[id] = (a * 1664525u + b + pc.salt) ^ ((c >> 13u) | (a << 19u));
+}
