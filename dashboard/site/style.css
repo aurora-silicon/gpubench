@@ -21,6 +21,7 @@
   --chart-j713: #805e00;
   --chart-j615: #4c6f14;
   --chart-j413: #00788a;
+  --chart-j473: #2a6a4e;
   --chart-m1pro: #714ac1;
   --chart-j700: #a4372c;
   --chart-j775c: #6b4f2a;
@@ -51,6 +52,7 @@
     --chart-j713: #eac467;
     --chart-j615: #aaca69;
     --chart-j413: #61cada;
+    --chart-j473: #74cfa5;
     --chart-m1pro: #ba9aff;
     --chart-j700: #f89182;
     --chart-j775c: #d8b48a;
@@ -341,6 +343,7 @@ th:first-child, td:first-child { padding-left: 20px; font-family: var(--sans); }
 .chart-j713 { --chip-tone: var(--chart-j713); }
 .chart-j615 { --chip-tone: var(--chart-j615); }
 .chart-j413 { --chip-tone: var(--chart-j413); }
+.chart-j473 { --chip-tone: var(--chart-j473); }
 .chart-m1pro { --chip-tone: var(--chart-m1pro); }
 .chart-j700 { --chip-tone: var(--chart-j700); }
 .chart-neo { --chip-tone: var(--vulkan); }

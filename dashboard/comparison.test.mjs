@@ -76,6 +76,23 @@ test("workload families stay grouped across API lanes", () => {
   assert.equal(benchmarkGroup(result(10, { lane: "games", test: "games.godot" })), "games");
 });
 
+test("games runs without Metal baselines remain unmatched and stay in the games group", () => {
+  const row = result(128.99, {
+    lane: "games", test: "games.godot", params: { method: "forward_plus", res: "1280x720" },
+    mode: "benchmark", depth: 1,
+  });
+  const linux = run("vulkan", [row], { suite: null });
+  const pairs = buildComparisons([linux]);
+  assert.equal(pairs.length, 1);
+  assert.equal(pairs[0].ratio, null);
+  assert.equal(pairs[0].reason, "Metal missing");
+  assert.equal(benchmarkGroup(pairs[0].linux.row), "games");
+  const gamesGroup = BENCHMARK_GROUPS.find(({ id }) => id === "games");
+  assert.deepEqual(selectChartCases(gamesGroup, [{
+    row: pairs[0].linux.row, api: { id: pairs[0].api }, ratio: pairs[0].ratio, title: "Godot 4.7.2",
+  }]), []);
+});
+
 test("group curation respects filtered cases and keeps different APIs and metrics separate", () => {
   const group = BENCHMARK_GROUPS.find(({ id }) => id === "light-render");
   const entry = (depth, api, primary, ratio) => ({
