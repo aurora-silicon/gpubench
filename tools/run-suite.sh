@@ -40,7 +40,10 @@ in_list() { # in_list item "a,b,c" (empty list = everything)
   return 1
 }
 n=0
+# Split the list literally before the loop restores globbing for executor arguments.
+set -f
 for plan in $PLANS; do
+  set +f
   [ -f "$plan" ] || continue
   while read -r chunk lane test args; do
     case "$chunk" in ''|'#'*) continue;; esac
