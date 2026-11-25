@@ -43,6 +43,8 @@ typedef void (VKAPI_PTR *PFN_vkCmdSetRenderingInputAttachmentIndicesKHR)(
 #include "gb_common.h"
 
 #define GB_MAX_QUEUES 16
+/* Command buffers one submission of a stream test may record (parts). */
+#define GB_MAX_PARTS 64
 
 struct gb_vk {
    VkInstance instance;
@@ -179,12 +181,19 @@ void gb_begin_render(VkCommandBuffer cb, const struct gb_img *im, const float cl
 typedef void (*gb_record_fn)(void *user, VkCommandBuffer cb, uint64_t k);
 typedef void (*gb_done_fn)(void *user, uint64_t k, int slot);
 
+/* Records part `part` of submission `k` into its own command buffer. */
+typedef void (*gb_record_part_fn)(void *user, VkCommandBuffer cb, uint64_t k, int part);
+
 struct gb_stream {
    struct gb_vk *vk;
    VkQueue queue;
    int depth;
    VkCommandPool *pools;
+   /* Per slot: 1 command buffer, or with parts > 1 the timestamp-only
+    * command buffer, the parts and the closing timestamp-only one. */
    VkCommandBuffer *cbs;
+   int parts;
+   gb_record_part_fn record_part;
    uint64_t *submit_ns;
    VkSemaphore tl;
    uint64_t value;
@@ -200,6 +209,10 @@ struct gb_stream {
 void gb_stream_init(struct gb_stream *s, struct gb_vk *vk, int queue_index, int depth,
                     gb_record_fn record, gb_done_fn done, void *user);
 void gb_stream_finish(struct gb_stream *s);
+/* Records every submission of the stream as `parts` command buffers,
+ * submitted together in one vkQueueSubmit2, as engines that record one pass
+ * across several command lists do. Call right after gb_stream_init(). */
+void gb_stream_set_parts(struct gb_stream *s, int parts, gb_record_part_fn record_part);
 /* Runs the stream from absolute time t0: warm-up, then nwin windows. Returns
  * 0, or -1 on a GPU timeout (pass->failed). */
 int gb_stream_run(struct gb_stream *s, bool timed, uint64_t t0, uint64_t warmup_ns, int nwin,
@@ -223,6 +236,10 @@ struct gb_stream_test {
    /* derived throughput metrics from per-window us_per_submit */
    void (*derive)(const struct gb_opts *o, struct gb_result *r, const struct gb_samples *us_per_submit);
    bool no_timed; /* never run the timed pass (the test has no GPU work to time) */
+   /* Optional: submissions of `parts(state)` command buffers each, recorded
+    * by record_part instead of record (gb_stream_set_parts()). */
+   int (*parts)(void *state);
+   gb_record_part_fn record_part;
    /* Optional: compare the output of the submissions just run with the
     * test's reference. Called with the queue idle, once per result. */
    void (*check)(struct gb_vk *vk, void *state, struct gb_check *chk);

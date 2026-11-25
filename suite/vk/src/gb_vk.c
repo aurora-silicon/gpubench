@@ -918,6 +918,29 @@ gb_stream_init(struct gb_stream *s, struct gb_vk *vk, int queue_index, int depth
 }
 
 void
+gb_stream_set_parts(struct gb_stream *s, int parts, gb_record_part_fn record_part)
+{
+   if (parts <= 1 || !record_part)
+      return;
+   /* One pool per slot still: a slot's command buffers are reset together. */
+   VkCommandBuffer *cbs = calloc((size_t)s->depth * (parts + 2), sizeof(VkCommandBuffer));
+   for (int i = 0; i < s->depth; i++) {
+      vkFreeCommandBuffers(s->vk->dev, s->pools[i], 1, &s->cbs[i]);
+      VkCommandBufferAllocateInfo ai = {
+         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+         .commandPool = s->pools[i],
+         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+         .commandBufferCount = (uint32_t)parts + 2,
+      };
+      GB_VK_CHECK(vkAllocateCommandBuffers(s->vk->dev, &ai, &cbs[(size_t)i * (parts + 2)]));
+   }
+   free(s->cbs);
+   s->cbs = cbs;
+   s->parts = parts;
+   s->record_part = record_part;
+}
+
+void
 gb_stream_finish(struct gb_stream *s)
 {
    VkSemaphoreWaitInfo wi = {
@@ -941,12 +964,31 @@ gb_stream_finish(struct gb_stream *s)
 static void
 record_slot(struct gb_stream *s, int slot, uint64_t k, bool timed)
 {
-   VkCommandBuffer cb = s->cbs[slot];
    vkResetCommandPool(s->vk->dev, s->pools[slot], 0);
    VkCommandBufferBeginInfo bi = {
       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
       .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
    };
+   if (s->parts > 1) {
+      /* The stamps go in command buffers of their own, so every part is
+       * only what the test records. */
+      VkCommandBuffer *cbs = &s->cbs[(size_t)slot * (s->parts + 2)];
+      for (int p = 0; p < s->parts; p++) {
+         vkBeginCommandBuffer(cbs[1 + p], &bi);
+         s->record_part(s->user, cbs[1 + p], k, p);
+         vkEndCommandBuffer(cbs[1 + p]);
+      }
+      if (timed) {
+         vkBeginCommandBuffer(cbs[0], &bi);
+         vkCmdWriteTimestamp2(cbs[0], VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, s->qp, 2 * slot);
+         vkEndCommandBuffer(cbs[0]);
+         vkBeginCommandBuffer(cbs[s->parts + 1], &bi);
+         vkCmdWriteTimestamp2(cbs[s->parts + 1], VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, s->qp, 2 * slot + 1);
+         vkEndCommandBuffer(cbs[s->parts + 1]);
+      }
+      return;
+   }
+   VkCommandBuffer cb = s->cbs[slot];
    vkBeginCommandBuffer(cb, &bi);
    if (timed)
       vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, s->qp, 2 * slot);
@@ -957,12 +999,25 @@ record_slot(struct gb_stream *s, int slot, uint64_t k, bool timed)
 }
 
 static VkResult
-submit_slot(struct gb_stream *s, int slot, uint64_t value)
+submit_slot(struct gb_stream *s, int slot, uint64_t value, bool timed)
 {
-   VkCommandBufferSubmitInfo cbi = {
-      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-      .commandBuffer = s->cbs[slot],
-   };
+   VkCommandBufferSubmitInfo cbis[GB_MAX_PARTS + 2];
+   uint32_t ncb = 1;
+   if (s->parts > 1) {
+      const VkCommandBuffer *cbs = &s->cbs[(size_t)slot * (s->parts + 2)];
+      const int first = timed ? 0 : 1;
+      ncb = (uint32_t)s->parts + (timed ? 2 : 0);
+      for (uint32_t i = 0; i < ncb; i++)
+         cbis[i] = (VkCommandBufferSubmitInfo){
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+            .commandBuffer = cbs[first + i],
+         };
+   } else {
+      cbis[0] = (VkCommandBufferSubmitInfo){
+         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+         .commandBuffer = s->cbs[slot],
+      };
+   }
    VkSemaphoreSubmitInfo sig = {
       .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
       .semaphore = s->tl,
@@ -971,8 +1026,8 @@ submit_slot(struct gb_stream *s, int slot, uint64_t value)
    };
    VkSubmitInfo2 si = {
       .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-      .commandBufferInfoCount = 1,
-      .pCommandBufferInfos = &cbi,
+      .commandBufferInfoCount = ncb,
+      .pCommandBufferInfos = cbis,
       .signalSemaphoreInfoCount = 1,
       .pSignalSemaphoreInfos = &sig,
    };
@@ -1003,7 +1058,7 @@ gb_stream_once(struct gb_stream *s)
    uint64_t v = s->value + 1;
    record_slot(s, 0, v, false);
    uint64_t t0 = gb_now_ns();
-   if (submit_slot(s, 0, v) != VK_SUCCESS)
+   if (submit_slot(s, 0, v, false) != VK_SUCCESS)
       return -1;
    if (wait_value(s, v))
       return -1;
@@ -1076,7 +1131,7 @@ gb_stream_run(struct gb_stream *s, bool timed, uint64_t t0, uint64_t warmup_ns, 
       record_slot(s, slot, base + k + 1, timed);
       uint64_t r1 = gb_now_ns();
       s->submit_ns[slot] = r1;
-      VkResult vr = submit_slot(s, slot, base + k + 1);
+      VkResult vr = submit_slot(s, slot, base + k + 1, timed);
       uint64_t r2 = gb_now_ns();
       if (vr != VK_SUCCESS) {
          gb_log("vkQueueSubmit2 failed: %d", (int)vr);
@@ -1203,6 +1258,8 @@ run_child(const struct gb_opts *o, const struct gb_stream_test *t)
    }
    struct gb_stream s;
    gb_stream_init(&s, &vk, 0, 1, t->record, t->done, st);
+   if (t->parts)
+      gb_stream_set_parts(&s, t->parts(st), t->record_part);
    struct gb_pass prime;
    gb_stream_run(&s, false, gb_now_ns(), 0, 1, 30000000ull, &prime); /* build contexts before READY */
    gb_pass_free(&prime);
@@ -1318,6 +1375,8 @@ gb_run_stream_test(const struct gb_opts *o, const struct gb_stream_test *t)
       if (o->mode == GB_MODE_QUEUE) {
          struct gb_stream s;
          gb_stream_init(&s, &vk, 0, n, t->record, t->done, st);
+         if (t->parts)
+            gb_stream_set_parts(&s, t->parts(st), t->record_part);
          if (first) {
             first_us = gb_stream_once(&s);
             first = false;
@@ -1334,8 +1393,11 @@ gb_run_stream_test(const struct gb_opts *o, const struct gb_stream_test *t)
             continue;
          }
          struct gb_stream *ss = calloc(n, sizeof(*ss));
-         for (int i = 0; i < n; i++)
+         for (int i = 0; i < n; i++) {
             gb_stream_init(&ss[i], &vk, i, 1, t->record, t->done, st);
+            if (t->parts)
+               gb_stream_set_parts(&ss[i], t->parts(st), t->record_part);
+         }
          run_threads(ss, n, false, W, o->runs, R, &u);
          if (do_timed && !u.failed)
             run_threads(ss, n, true, timed_warm(o), o->timed_runs, R, &ti);

@@ -93,6 +93,11 @@ references, encode, commit), because Metal has no reusable command buffers.
   - `us_per_submit_timed`: wall-clock rate during the timed pass. On hk
     timestamps ride on command retirement, so the difference from
     `us_per_submit` is itself a measured cost.
+  - A test that records each submission as several command buffers
+    (`render.pass_split mode=multi_cb`) writes the two stamps in command
+    buffers of their own, submitted first and last in the same
+    `vkQueueSubmit2`, so every recorded command buffer holds only the test's
+    work.
 - Percentiles: `median`, `p5` and `p95` are taken over the per-window values
   for rate metrics and over all individual samples for per-submission
   metrics; `n` is the number of values.
