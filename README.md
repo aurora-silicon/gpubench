@@ -44,7 +44,7 @@ Set `GB_COOLDOWN_CMD` to a script to run before each chunk, for example one that
 
 For a short functional run, set `GB_WARMUP_MS=20 GB_RUNS=1 GB_RUN_MS=40 GB_TIMED_RUNS=1`. Keep those results separate from measured runs.
 
-The optional [GL/GLES executor](suite/gl/README.md) runs matched render and compute workloads through headless EGL. Build with `-DGB_BUILD_GL=ON`; use `MESA_LOADER_DRIVER_OVERRIDE=asahi` or `zink` to select the Mesa GL driver.
+The optional [GL/GLES executor](suite/gl/README.md) runs matched render and compute workloads through headless EGL. Build with `-DGB_BUILD_GL=ON`; use `MESA_LOADER_DRIVER_OVERRIDE=aurora` or `zink` to select the Mesa GL driver.
 
 ## Layout
 

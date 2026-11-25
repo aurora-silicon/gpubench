@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 /* Generic Linux DRM / GPU error lines. Driver names are the upstream kernel module names. */
+/* LEGACY-ASAHI(2027-02-28): asahi matches kernels from before the aurora rename. */
 static const char *const default_patterns[] = {
    "\\b(gpu|drm)\\b.*(hang|hung|time ?out|timed out|reset|recover|lost|crash|fault|wedged)",
    "\\[drm(:[^]]*)?\\] \\*error\\*",

@@ -244,7 +244,7 @@ def qualification_errors(record):
     digest = lambda value: isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value)
     if not isinstance(module_id, str) or not re.fullmatch(r'[0-9a-f]{40}', module_id):
         errors.append('Linux module build ID is missing or malformed')
-    # The GPU module is aurora, or asahi on kernels before the rename.
+    # The GPU module is aurora. LEGACY-ASAHI(2027-02-28): records from kernels before the rename name it asahi.
     if not isinstance(module, dict) or module.get('name') not in ('aurora', 'asahi'):
         errors.append('Linux stack does not identify the GPU kernel module (aurora)')
     if not commit(meta.get('mesa_sha')) or not digest(meta.get('mesa_sha256')):

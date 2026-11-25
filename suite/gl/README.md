@@ -1,7 +1,7 @@
 # Headless GL/GLES executor
 
 `gpubench-gl` measures the standard suite's render and compute workloads through
-EGL. Use the same binary with `MESA_LOADER_DRIVER_OVERRIDE=asahi` and `zink` to
+EGL. Use the same binary with `MESA_LOADER_DRIVER_OVERRIDE=aurora` and `zink` to
 compare native GL with GL over Vulkan. The requested override and the actual
 GL renderer, vendor, version, capabilities, and suite revision are included in
 `--info` and every result. Check the renderer before accepting a measurement;
@@ -96,9 +96,9 @@ for hardware measurements. Keep all API, size, depth, and timing arguments
 identical between the two driver runs.
 
 ```sh
-# Writes new directories asahi/ and zink/ under a new output directory.
+# Writes new directories aurora/ and zink/ under a new output directory.
 tools/run-gl-pair.sh gl-pair
-python3 tools/compare.py gl-pair/asahi gl-pair/zink \
+python3 tools/compare.py gl-pair/aurora gl-pair/zink \
   --labels native-GL,Zink --metric us_per_submit --out gl-pair/comparison.md
 ```
 
