@@ -1,0 +1,10 @@
+# Queue lifecycle churn and physical queue rebind plan (Vulkan-only).
+# chunk   lane   test          arguments
+
+# Single-engine context/queue create -> submit -> destroy overhead.
+churn    suite  queue.churn   --depths 1,4 --param kind=compute --param queues=4
+churn    suite  queue.churn   --depths 1,4 --param kind=render  --param queues=4
+
+# Multi-process mixed compute+render physical queue rebind stress (last so a
+# hang on an unpatched kernel cannot perturb the churn numbers above).
+rebind   suite  queue.rebind  --depths 1,6 --param queues=7 --param inflight=2
