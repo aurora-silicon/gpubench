@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+
+// compute.deferred_light: full-screen deferred lighting, one thread per pixel,
+// modeled on the full-resolution lighting kernels of DXVK D3D11 titles.
+//
+// Each thread decodes four G-buffer layers plus depth, keeps MATS material
+// vec4s and MATS accumulator vec4s live across a per-tile light loop that ends
+// at the list's terminator (an early break), weights each light by a 4-tap
+// shadow PCF, and writes one packed RGBA16 result. MATS sets the register
+// pressure (regs=mid / regs=high).
+//
+// Every float value is an integer below 2^24, so each operation is exact and
+// the result does not depend on FMA contraction or evaluation order: the CPU
+// reference (gb_deferred_light_ref) reproduces it bit for bit.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(constant_id = 0) const uint MATS = 8u;
+
+layout(std430, set = 0, binding = 0) readonly buffer G0 { uint g0[]; };
+layout(std430, set = 0, binding = 1) readonly buffer G1 { uint g1[]; };
+layout(std430, set = 0, binding = 2) readonly buffer G2 { uint g2[]; };
+layout(std430, set = 0, binding = 3) readonly buffer G3 { uint g3[]; };
+layout(std430, set = 0, binding = 4) readonly buffer Depth { uint depth[]; };
+layout(std430, set = 0, binding = 5) readonly buffer Lights { uvec4 lights[]; };
+layout(std430, set = 0, binding = 6) readonly buffer Shadow { uint shadow[]; };
+layout(std430, set = 0, binding = 7) writeonly buffer Dst { uvec2 dst[]; };
+layout(push_constant) uniform PC {
+   int w;
+   int h;
+   int max_lights;   // lights per tile list, terminator included
+   int shadow_dim;
+} pc;
+
+const uint TILE_LISTS = 64u;
+const uint MAX_MATS = 32u;
+
+vec4 bytes4(uint v)
+{
+   return vec4(float(v & 15u), float((v >> 8) & 15u), float((v >> 16) & 15u),
+               float((v >> 24) & 15u));
+}
+
+float shadow_tap(int sx, int sy, float ref)
+{
+   int cx = clamp(sx, 0, pc.shadow_dim - 1);
+   int cy = clamp(sy, 0, pc.shadow_dim - 1);
+   return float(shadow[cy * pc.shadow_dim + cx]) >= ref ? 1.0 : 0.0;
+}
+
+void main()
+{
+   int x = int(gl_GlobalInvocationID.x);
+   int y = int(gl_GlobalInvocationID.y);
+   if (x >= pc.w || y >= pc.h)
+      return;
+
+   int idx = y * pc.w + x;
+   uint d = depth[idx];
+   // Sky: nothing to light.
+   if (d == 0u) {
+      dst[idx] = uvec2(0u);
+      return;
+   }
+
+   vec4 a = bytes4(g0[idx]);
+   vec4 b = bytes4(g1[idx]);
+   vec4 c = bytes4(g2[idx]);
+   vec4 e = bytes4(g3[idx]);
+   vec3 pos = vec3(float(x & 63), float(y & 63), float(d & 63u));
+   vec3 n = a.xyz - vec3(7.0);
+
+   vec4 mat[MAX_MATS];
+   vec4 acc[MAX_MATS];
+   for (uint k = 0u; k < MATS; ++k) {
+      vec4 src = (k & 3u) == 0u ? b : (k & 3u) == 1u ? c : (k & 3u) == 2u ? e : a;
+      mat[k] = vec4(src[k & 3u], src[(k + 1u) & 3u], src[(k + 2u) & 3u], float(k));
+      acc[k] = vec4(0.0);
+   }
+
+   uint tile = (gl_WorkGroupID.y * 7u + gl_WorkGroupID.x) % TILE_LISTS;
+   int base = int(tile) * pc.max_lights * 2;
+   int sx = x >> 2, sy = y >> 2;
+   float ref = float(d & 63u);
+
+   for (int i = 0; i < pc.max_lights; ++i) {
+      uvec4 l0 = lights[base + 2 * i];
+      uvec4 l1 = lights[base + 2 * i + 1];
+      if (l1.w == 0u)
+         break;
+
+      vec3 dv = vec3(l0.xyz) - pos;
+      float dist2 = dot(dv, dv);
+      float r2 = float(l0.w);
+      if (dist2 < r2) {
+         float ndl = max(dot(n, dv), 0.0);
+         float term = floor((r2 - dist2) * ndl * (1.0 / 65536.0));
+         int o = int(l1.w & 3u) - 1;
+         float vis = shadow_tap(sx + o, sy, ref) + shadow_tap(sx - o, sy, ref) +
+                     shadow_tap(sx, sy + o, ref) + shadow_tap(sx, sy - o, ref);
+         vec4 col = vec4(l1.xyz, 1.0) * (term * vis);
+         for (uint k = 0u; k < MATS; ++k)
+            acc[k] += col * mat[k];
+      }
+   }
+
+   uvec4 sum = uvec4(0u);
+   for (uint k = 0u; k < MATS; ++k)
+      sum ^= uvec4(acc[k]) << (k & 7u);
+   dst[idx] = uvec2((sum.x & 0xffffu) | (sum.y << 16), (sum.z & 0xffffu) | (sum.w << 16));
+}

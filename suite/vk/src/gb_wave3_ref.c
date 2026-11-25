@@ -405,3 +405,168 @@ gb_msaa_merge_ref_rgba16f(uint32_t w, uint32_t h, uint32_t passes, uint16_t *out
    }
    return gb_crc32(out_rgba16f, (size_t)w * h * 8u);
 }
+
+/* =========================================================================
+ * 6. compute.deferred_light CPU reference
+ *
+ * Mirrors suite/shaders/deferred_light.comp operation for operation. Every
+ * float value is an integer below 2^24, so each operation is exact and the
+ * result matches the GPU bit for bit whatever the contraction or order.
+ * ========================================================================= */
+
+static uint32_t
+dlight_hash(uint32_t v)
+{
+   v ^= v >> 16;
+   v *= 0x7feb352du;
+   v ^= v >> 15;
+   v *= 0x846ca68bu;
+   v ^= v >> 16;
+   return v;
+}
+
+void
+gb_deferred_light_fill(struct gb_dlight_input *in, uint32_t w, uint32_t h, uint32_t lights)
+{
+   memset(in, 0, sizeof(*in));
+   in->w = w;
+   in->h = h;
+   in->max_lights = lights + 1u;
+   in->shadow_dim = GB_DLIGHT_SHADOW_DIM;
+   size_t px = (size_t)w * h;
+   for (int l = 0; l < 4; l++) {
+      in->g[l] = malloc(px * sizeof(uint32_t));
+      for (size_t i = 0; i < px; i++)
+         in->g[l][i] = dlight_hash((uint32_t)i * 4u + (uint32_t)l + 0x9e3779b9u);
+   }
+   in->depth = malloc(px * sizeof(uint32_t));
+   for (size_t i = 0; i < px; i++) {
+      uint32_t r = dlight_hash((uint32_t)i ^ 0x51ed270bu);
+      /* About 1 pixel in 16 is sky. */
+      in->depth[i] = (r & 15u) == 0u ? 0u : 1u + ((r >> 4) & 254u);
+   }
+   size_t slots = (size_t)GB_DLIGHT_TILE_LISTS * in->max_lights;
+   in->lights = calloc(slots * 2u * 4u, sizeof(uint32_t));
+   for (uint32_t t = 0; t < GB_DLIGHT_TILE_LISTS; t++) {
+      /* Tile lists end 0..3 lights early, so the loop's early break varies
+       * between workgroups. */
+      uint32_t count = lights > 3u ? lights - (t & 3u) : lights;
+      for (uint32_t i = 0; i < count; i++) {
+         uint32_t *l = in->lights + ((size_t)t * in->max_lights + i) * 8u;
+         uint32_t r0 = dlight_hash(t * 977u + i * 131u + 1u);
+         uint32_t r1 = dlight_hash(r0 + 0x2545f491u);
+         l[0] = r0 & 63u;
+         l[1] = (r0 >> 6) & 63u;
+         l[2] = (r0 >> 12) & 63u;
+         l[3] = 256u + ((r0 >> 18) & 4095u) % 3841u; /* radius^2, 256..4096 */
+         l[4] = r1 & 15u;
+         l[5] = (r1 >> 4) & 15u;
+         l[6] = (r1 >> 8) & 15u;
+         l[7] = 1u + ((r1 >> 12) & 3u);              /* nonzero: not the terminator */
+      }
+      /* Slots from `count` on stay zero: l1.w == 0 is the terminator. */
+   }
+   size_t sp = (size_t)in->shadow_dim * in->shadow_dim;
+   in->shadow = malloc(sp * sizeof(uint32_t));
+   for (size_t i = 0; i < sp; i++)
+      in->shadow[i] = dlight_hash((uint32_t)i + 0x68e31da4u) & 63u;
+}
+
+void
+gb_deferred_light_free(struct gb_dlight_input *in)
+{
+   for (int l = 0; l < 4; l++)
+      free(in->g[l]);
+   free(in->depth);
+   free(in->lights);
+   free(in->shadow);
+   memset(in, 0, sizeof(*in));
+}
+
+static void
+dlight_bytes4(uint32_t v, float out[4])
+{
+   out[0] = (float)(v & 15u);
+   out[1] = (float)((v >> 8) & 15u);
+   out[2] = (float)((v >> 16) & 15u);
+   out[3] = (float)((v >> 24) & 15u);
+}
+
+static float
+dlight_shadow_tap(const struct gb_dlight_input *in, int32_t sx, int32_t sy, float ref)
+{
+   int32_t dim = (int32_t)in->shadow_dim;
+   int32_t cx = clamp_i32(sx, 0, dim - 1), cy = clamp_i32(sy, 0, dim - 1);
+   return (float)in->shadow[(size_t)cy * in->shadow_dim + (size_t)cx] >= ref ? 1.0f : 0.0f;
+}
+
+uint32_t
+gb_deferred_light_ref(const struct gb_dlight_input *in, uint32_t mats, uint32_t *out)
+{
+   for (uint32_t y = 0; y < in->h; y++) {
+      for (uint32_t x = 0; x < in->w; x++) {
+         size_t idx = (size_t)y * in->w + x;
+         uint32_t d = in->depth[idx];
+         if (d == 0u) {
+            out[idx * 2u + 0u] = 0u;
+            out[idx * 2u + 1u] = 0u;
+            continue;
+         }
+         float g[4][4];
+         for (int l = 0; l < 4; l++)
+            dlight_bytes4(in->g[l][idx], g[l]);
+         const float *a = g[0], *b = g[1], *c = g[2], *e = g[3];
+         float pos[3] = {(float)(x & 63u), (float)(y & 63u), (float)(d & 63u)};
+         float n[3] = {a[0] - 7.0f, a[1] - 7.0f, a[2] - 7.0f};
+
+         float mat[GB_DLIGHT_MAX_MATS][4], acc[GB_DLIGHT_MAX_MATS][4];
+         for (uint32_t k = 0; k < mats; k++) {
+            const float *src = (k & 3u) == 0u ? b : (k & 3u) == 1u ? c : (k & 3u) == 2u ? e : a;
+            mat[k][0] = src[k & 3u];
+            mat[k][1] = src[(k + 1u) & 3u];
+            mat[k][2] = src[(k + 2u) & 3u];
+            mat[k][3] = (float)k;
+            acc[k][0] = acc[k][1] = acc[k][2] = acc[k][3] = 0.0f;
+         }
+
+         uint32_t tile = ((y / GB_DLIGHT_LOCAL) * 7u + (x / GB_DLIGHT_LOCAL)) % GB_DLIGHT_TILE_LISTS;
+         size_t base = (size_t)tile * in->max_lights * 2u;
+         int32_t sx = (int32_t)x >> 2, sy = (int32_t)y >> 2;
+         float ref = (float)(d & 63u);
+
+         for (uint32_t i = 0; i < in->max_lights; i++) {
+            const uint32_t *l0 = in->lights + (base + 2u * i) * 4u;
+            const uint32_t *l1 = l0 + 4u;
+            if (l1[3] == 0u)
+               break;
+            float dv[3] = {(float)l0[0] - pos[0], (float)l0[1] - pos[1], (float)l0[2] - pos[2]};
+            float dist2 = dv[0] * dv[0] + dv[1] * dv[1] + dv[2] * dv[2];
+            float r2 = (float)l0[3];
+            if (dist2 < r2) {
+               float ndl = n[0] * dv[0] + n[1] * dv[1] + n[2] * dv[2];
+               if (ndl < 0.0f)
+                  ndl = 0.0f;
+               /* floor() of a value >= 0 is its truncation. A -0 here (ndl = -0)
+                * only ever adds zeros, so its sign cannot reach the output. */
+               float term = (float)(uint32_t)((r2 - dist2) * ndl * (1.0f / 65536.0f));
+               int32_t o = (int32_t)(l1[3] & 3u) - 1;
+               float vis = dlight_shadow_tap(in, sx + o, sy, ref) + dlight_shadow_tap(in, sx - o, sy, ref) +
+                           dlight_shadow_tap(in, sx, sy + o, ref) + dlight_shadow_tap(in, sx, sy - o, ref);
+               float tv = term * vis;
+               float col[4] = {(float)l1[0] * tv, (float)l1[1] * tv, (float)l1[2] * tv, tv};
+               for (uint32_t k = 0; k < mats; k++)
+                  for (int ch = 0; ch < 4; ch++)
+                     acc[k][ch] += col[ch] * mat[k][ch];
+            }
+         }
+
+         uint32_t sum[4] = {0, 0, 0, 0};
+         for (uint32_t k = 0; k < mats; k++)
+            for (int ch = 0; ch < 4; ch++)
+               sum[ch] ^= (uint32_t)acc[k][ch] << (k & 7u);
+         out[idx * 2u + 0u] = (sum[0] & 0xffffu) | (sum[1] << 16);
+         out[idx * 2u + 1u] = (sum[2] & 0xffffu) | (sum[3] << 16);
+      }
+   }
+   return gb_crc32(out, (size_t)in->w * in->h * 2u * sizeof(uint32_t));
+}

@@ -5,10 +5,12 @@
  *   3. compute.desc_search — Nested-loop vec4 descriptor search (LICM + idiv/imod)
  *   4. compute.chain       — Back-to-back dependent compute dispatch chain
  *   5. render.msaa_merge   — Multi-pass 2x/4x MSAA color-compressed render target merge
+ *   6. compute.deferred_light — Full-screen deferred lighting at high register pressure
  */
 #define _GNU_SOURCE
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "gb_params.h"
 #include "gb_vk.h"
@@ -25,6 +27,7 @@ parse_res_w3(const char *s, uint32_t *w, uint32_t *h)
    else if (!strcmp(s, "1080p")) *w = 1920, *h = 1080;
    else if (!strcmp(s, "1440p")) *w = 2560, *h = 1440;
    else if (!strcmp(s, "2160p")) *w = 3840, *h = 2160;
+   else if (!strcmp(s, "native")) *w = 3024, *h = 1964; /* 14-inch MacBook Pro panel */
    else return false;
    return true;
 }
@@ -95,6 +98,7 @@ compute_pipe_spec_w3(struct gb_vk *vk, const uint32_t *code, size_t bytes, int n
    VkShaderModule m = gb_shader(vk, code, bytes);
    VkComputePipelineCreateInfo cci = {
       .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+      .flags = gb_vk_want_pipeline_stats ? VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR : 0,
       .stage = {
          .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
          .stage = VK_SHADER_STAGE_COMPUTE_BIT,
@@ -1200,3 +1204,214 @@ static const struct gb_stream_test t_render_msaa_merge = {
 };
 
 int gb_run_render_msaa_merge(const struct gb_opts *o) { return gb_run_stream_test(o, &t_render_msaa_merge); }
+
+/* =========================================================================
+ * 6. compute.deferred_light (full-screen deferred lighting, high pressure)
+ *
+ * One thread per pixel at the panel's resolution: four G-buffer layers plus
+ * depth, MATS material and accumulator vec4s live across a per-tile light
+ * loop with an early break, a 4-tap shadow PCF per light, packed RGBA16
+ * output. regs=high reproduces a 247-GPR spilling kernel on AGX3C, regs=mid a
+ * ~160-GPR one. The result also reports the pipeline's register count, spills
+ * and threads from VK_KHR_pipeline_executable_properties.
+ * ========================================================================= */
+
+struct dlight_state {
+   uint32_t w, h, mats;
+   struct gb_dlight_input in;
+   struct gb_pipe p;
+   struct gb_buf g[4], depth, lights, shadow, out;
+   uint32_t *ref;
+   uint32_t ref_crc;
+};
+
+/* Pipeline statistics of the last setup, for derive (which has no state). */
+static struct {
+   bool valid;
+   int64_t gprs, spills, fills, threads, instrs;
+} dlight_stats;
+
+static void
+dlight_read_stats(struct gb_vk *vk, VkPipeline pipe)
+{
+   memset(&dlight_stats, 0, sizeof(dlight_stats));
+   PFN_vkGetPipelineExecutableStatisticsKHR gs =
+      (PFN_vkGetPipelineExecutableStatisticsKHR)vkGetDeviceProcAddr(vk->dev, "vkGetPipelineExecutableStatisticsKHR");
+   if (!gs)
+      return;
+   VkPipelineExecutableInfoKHR ei = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_INFO_KHR,
+      .pipeline = pipe,
+      .executableIndex = 0,
+   };
+   uint32_t ns = 0;
+   if (gs(vk->dev, &ei, &ns, NULL) != VK_SUCCESS || !ns)
+      return;
+   VkPipelineExecutableStatisticKHR *st = calloc(ns, sizeof(*st));
+   for (uint32_t i = 0; i < ns; i++)
+      st[i].sType = VK_STRUCTURE_TYPE_PIPELINE_EXECUTABLE_STATISTIC_KHR;
+   if (gs(vk->dev, &ei, &ns, st) == VK_SUCCESS) {
+      for (uint32_t i = 0; i < ns; i++) {
+         int64_t v;
+         if (st[i].format == VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_UINT64_KHR)
+            v = (int64_t)st[i].value.u64;
+         else if (st[i].format == VK_PIPELINE_EXECUTABLE_STATISTIC_FORMAT_INT64_KHR)
+            v = st[i].value.i64;
+         else
+            continue;
+         const char *name = st[i].name;
+         if (!strcasecmp(name, "GPRs")) {
+            dlight_stats.gprs = v;
+            dlight_stats.valid = true;
+         } else if (!strcasecmp(name, "Spills")) {
+            dlight_stats.spills = v;
+         } else if (!strcasecmp(name, "Fills")) {
+            dlight_stats.fills = v;
+         } else if (!strcasecmp(name, "Threads")) {
+            dlight_stats.threads = v;
+         } else if (!strcasecmp(name, "Instructions")) {
+            dlight_stats.instrs = v;
+         }
+      }
+   }
+   free(st);
+}
+
+static bool
+dlight_mats(const struct gb_opts *o, uint32_t *mats)
+{
+   const char *regs = gb_param(o, "regs", "high");
+   if (!strcmp(regs, "mid")) *mats = GB_DLIGHT_MATS_MID;
+   else if (!strcmp(regs, "high")) *mats = GB_DLIGHT_MATS_HIGH;
+   else return false;
+   return true;
+}
+
+static void *
+dlight_setup(struct gb_vk *vk, const struct gb_opts *o, char *err, size_t n)
+{
+   uint32_t mats = 0, w = 0, h = 0;
+   if (!dlight_mats(o, &mats)) {
+      snprintf(err, n, "regs must be mid or high");
+      return NULL;
+   }
+   if (!parse_res_w3(gb_param(o, "res", "native"), &w, &h)) {
+      snprintf(err, n, "res must be native, 720p, 1080p, 1440p or 2160p");
+      return NULL;
+   }
+   long lights = gb_param_int(o, "lights", 32);
+   if (lights < 1 || lights > (long)GB_DLIGHT_MAX_LIGHTS) {
+      snprintf(err, n, "lights must be 1..%u", GB_DLIGHT_MAX_LIGHTS);
+      return NULL;
+   }
+   struct dlight_state *st = calloc(1, sizeof(*st));
+   st->w = w;
+   st->h = h;
+   st->mats = mats;
+   gb_deferred_light_fill(&st->in, w, h, (uint32_t)lights);
+   size_t px = (size_t)w * h;
+   st->ref = malloc(px * 2u * sizeof(uint32_t));
+   st->ref_crc = gb_deferred_light_ref(&st->in, mats, st->ref);
+
+   const VkBufferUsageFlags src_usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+   for (int l = 0; l < 4; l++) {
+      gb_buf_create(vk, px * sizeof(uint32_t), src_usage, false, &st->g[l]);
+      gb_buf_upload(vk, st->in.g[l], &st->g[l], px * sizeof(uint32_t));
+   }
+   gb_buf_create(vk, px * sizeof(uint32_t), src_usage, false, &st->depth);
+   gb_buf_upload(vk, st->in.depth, &st->depth, px * sizeof(uint32_t));
+   size_t light_bytes = (size_t)GB_DLIGHT_TILE_LISTS * st->in.max_lights * 2u * 4u * sizeof(uint32_t);
+   gb_buf_create(vk, light_bytes, src_usage, false, &st->lights);
+   gb_buf_upload(vk, st->in.lights, &st->lights, light_bytes);
+   size_t shadow_bytes = (size_t)st->in.shadow_dim * st->in.shadow_dim * sizeof(uint32_t);
+   gb_buf_create(vk, shadow_bytes, src_usage, false, &st->shadow);
+   gb_buf_upload(vk, st->in.shadow, &st->shadow, shadow_bytes);
+   gb_buf_create(vk, px * 2u * sizeof(uint32_t),
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, false, &st->out);
+
+   VkSpecializationMapEntry me = {.constantID = 0, .offset = 0, .size = sizeof(uint32_t)};
+   VkSpecializationInfo si = {.mapEntryCount = 1, .pMapEntries = &me, .dataSize = sizeof(mats), .pData = &mats};
+   compute_pipe_spec_w3(vk, GB_SPV(deferred_light_comp), 8, 16, &si, &st->p);
+   struct gb_buf *b[8] = {&st->g[0], &st->g[1], &st->g[2], &st->g[3],
+                          &st->depth, &st->lights, &st->shadow, &st->out};
+   gb_pipe_set_buffers(vk, &st->p, b, 8);
+   dlight_read_stats(vk, st->p.pipe);
+   return st;
+}
+
+static void
+dlight_teardown(struct gb_vk *vk, void *p)
+{
+   struct dlight_state *st = p;
+   gb_pipe_destroy(vk, &st->p);
+   for (int l = 0; l < 4; l++)
+      gb_buf_destroy(vk, &st->g[l]);
+   gb_buf_destroy(vk, &st->depth);
+   gb_buf_destroy(vk, &st->lights);
+   gb_buf_destroy(vk, &st->shadow);
+   gb_buf_destroy(vk, &st->out);
+   gb_deferred_light_free(&st->in);
+   free(st->ref);
+   free(st);
+}
+
+static void
+dlight_record(void *p, VkCommandBuffer cb, uint64_t k)
+{
+   (void)k;
+   struct dlight_state *st = p;
+   struct { int32_t w, h, max_lights, shadow_dim; } pc = {
+      (int32_t)st->w, (int32_t)st->h, (int32_t)st->in.max_lights, (int32_t)st->in.shadow_dim,
+   };
+   vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, st->p.pipe);
+   vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, st->p.layout, 0, 1, &st->p.set, 0, NULL);
+   vkCmdPushConstants(cb, st->p.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+   vkCmdDispatch(cb, (st->w + GB_DLIGHT_LOCAL - 1u) / GB_DLIGHT_LOCAL,
+                 (st->h + GB_DLIGHT_LOCAL - 1u) / GB_DLIGHT_LOCAL, 1);
+}
+
+static void
+dlight_derive(const struct gb_opts *o, struct gb_result *r, const struct gb_samples *us)
+{
+   uint32_t w = 3024, h = 1964;
+   parse_res_w3(gb_param(o, "res", "native"), &w, &h);
+   gb_derive_rate(r, "mpix_s", "Mpix/s", us, (double)w * h);
+   if (dlight_stats.valid) {
+      gb_result_metric1(r, "gprs", "regs", true, (double)dlight_stats.gprs);
+      gb_result_metric1(r, "spills", "count", true, (double)dlight_stats.spills);
+      gb_result_metric1(r, "fills", "count", true, (double)dlight_stats.fills);
+      gb_result_metric1(r, "threads", "threads", false, (double)dlight_stats.threads);
+      gb_result_metric1(r, "instrs", "count", true, (double)dlight_stats.instrs);
+   }
+}
+
+static void
+dlight_check(struct gb_vk *vk, void *p, struct gb_check *chk)
+{
+   struct dlight_state *st = p;
+   size_t words = (size_t)st->w * st->h * 2u;
+   uint32_t *got = malloc(words * sizeof(uint32_t));
+   gb_buf_readback(vk, &st->out, got, words * sizeof(uint32_t));
+   gb_check_words(chk, got, st->ref, st->ref_crc, words);
+   free(got);
+}
+
+static const char *const dlight_params[] = {"res", "lights", "regs", NULL};
+static const struct gb_stream_test t_compute_deferred_light = {
+   .name = "compute.deferred_light",
+   .known_params = dlight_params,
+   .default_depths = {1, 4}, .ndefault = 2,
+   .setup = dlight_setup,
+   .teardown = dlight_teardown,
+   .record = dlight_record,
+   .derive = dlight_derive,
+   .check = dlight_check,
+};
+
+int
+gb_run_compute_deferred_light(const struct gb_opts *o)
+{
+   /* The register count, spills and threads are part of the result. */
+   gb_vk_want_pipeline_stats = true;
+   return gb_run_stream_test(o, &t_compute_deferred_light);
+}

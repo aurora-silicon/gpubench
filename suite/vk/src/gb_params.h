@@ -98,3 +98,12 @@
 #define GB_CHAIN_LOCAL 64u               /* compute.chain: 64 threads/workgroup */
 #define GB_CHAIN_SMALL_WORDS 1024u       /* compute.chain size=small (16 workgroups) */
 #define GB_CHAIN_MED_WORDS 16384u        /* compute.chain size=medium (256 workgroups) */
+
+/* ---- AAA native-resolution workload dimensions ---- */
+#define GB_DLIGHT_LOCAL 8u               /* compute.deferred_light: 8x8 workgroup, 1 thread/pixel */
+#define GB_DLIGHT_TILE_LISTS 64u         /* per-tile light lists, picked by workgroup */
+#define GB_DLIGHT_MAX_LIGHTS 63u         /* lights per list (+1 terminator slot) */
+#define GB_DLIGHT_MAX_MATS 32u           /* live material/accumulator vec4 pairs */
+#define GB_DLIGHT_MATS_MID 12u           /* regs=mid: ~160 GPRs on AGX3C */
+#define GB_DLIGHT_MATS_HIGH 26u          /* regs=high: ~247 GPRs, spills on AGX3C */
+#define GB_DLIGHT_SHADOW_DIM 1024u       /* shadow map, sampled at pixel / 4 */

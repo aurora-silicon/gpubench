@@ -33,3 +33,20 @@ uint32_t gb_chain_ref(uint32_t count, uint32_t passes, const uint32_t *init_buf,
 /* ---- 5. render.msaa_merge ---- */
 uint32_t gb_msaa_merge_ref_rgba8(uint32_t w, uint32_t h, uint32_t passes, uint32_t *out_rgba8);
 uint32_t gb_msaa_merge_ref_rgba16f(uint32_t w, uint32_t h, uint32_t passes, uint16_t *out_rgba16f);
+
+/* ---- 6. compute.deferred_light ---- */
+struct gb_dlight_input {
+   uint32_t w, h;
+   uint32_t max_lights; /* slots per tile list, terminator included */
+   uint32_t shadow_dim;
+   uint32_t *g[4];      /* w * h words each: four G-buffer layers */
+   uint32_t *depth;     /* w * h words; 0 = sky */
+   uint32_t *lights;    /* GB_DLIGHT_TILE_LISTS * max_lights * 2 uvec4s */
+   uint32_t *shadow;    /* shadow_dim^2 words */
+};
+/* Allocates and fills `in`; `lights` is the per-tile list length without the
+ * terminator. */
+void gb_deferred_light_fill(struct gb_dlight_input *in, uint32_t w, uint32_t h, uint32_t lights);
+void gb_deferred_light_free(struct gb_dlight_input *in);
+/* Writes w * h uvec2s to `out` and returns their CRC-32. */
+uint32_t gb_deferred_light_ref(const struct gb_dlight_input *in, uint32_t mats, uint32_t *out);

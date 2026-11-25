@@ -33,3 +33,10 @@ aaa-xfer     suite  transfer.ops         --depths 1,2 --param kind=mipchain
 aaa-postfx   suite  render.postfx        --depths 1,2 --param res=1080p --param msaa=4
 aaa-postfx   suite  render.postfx        --depths 1,2 --param res=1440p --param msaa=1
 aaa-postfx   suite  render.postfx        --depths 1,2 --param res=1440p --param msaa=4
+
+# 7. Full-screen deferred lighting at the 14-inch panel's 3024x1964: high register pressure,
+#    per-tile light loop with an early break, 4-tap shadow PCF (reports GPRs, spills, threads)
+aaa-native   suite  compute.deferred_light --depths 1,4 --param res=native --param lights=16 --param regs=mid
+aaa-native   suite  compute.deferred_light --depths 1,4 --param res=native --param lights=32 --param regs=mid
+aaa-native   suite  compute.deferred_light --depths 1,4 --param res=native --param lights=16 --param regs=high
+aaa-native   suite  compute.deferred_light --depths 1,4 --param res=native --param lights=32 --param regs=high
