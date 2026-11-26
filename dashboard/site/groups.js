@@ -1,4 +1,4 @@
-import { workloadKey } from "./comparison.js?v=6";
+import { workloadKey } from "./comparison.js?v=7";
 
 export const BENCHMARK_GROUPS = [
   {

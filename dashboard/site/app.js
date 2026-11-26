@@ -1,5 +1,5 @@
-import { buildComparisons, canCompare, compatible, geometricMeanRatio, metalPipelineUnsupported, relative, workloadKey } from "./comparison.js?v=6";
-import { BENCHMARK_GROUPS, benchmarkGroup, selectChartCases } from "./groups.js?v=7";
+import { buildComparisons, canCompare, compatible, geometricMeanRatio, metalPipelineUnsupported, relative, workloadKey } from "./comparison.js?v=7";
+import { BENCHMARK_GROUPS, benchmarkGroup, selectChartCases } from "./groups.js?v=8";
 
 const DEVICES = [
   { id: "neo", name: "A18 Pro", model: "MacBook Neo" },
@@ -363,6 +363,13 @@ function renderGroups(visible, scope) {
   return sections.length;
 }
 
+function showComparisonNotice(id, runs) {
+  const warning = byId(id);
+  const issue = runs.find((run) => run?.comparisonIssue)?.comparisonIssue;
+  warning.hidden = !issue;
+  warning.textContent = issue ? `${issue}. Flagged Linux runs are excluded from Metal comparisons.` : "";
+}
+
 function renderWinShares() {
   const rows = DEVICES.map((device) => {
     const entries = state.comparisons.filter((entry) => entry.device.id === device.id && entry.ratio != null);
@@ -371,7 +378,8 @@ function renderWinShares() {
     const ties = entries.length - wins - losses;
     const row = node("div");
     const label = node("div", null, "win-label");
-    const summary = entries.length ? `${wins}/${entries.length} · ${percent.format(wins / entries.length)}` : "No matches";
+    const issue = state.runs.find((run) => run.device === device.id && run.comparisonIssue)?.comparisonIssue;
+    const summary = entries.length ? `${wins}/${entries.length} · ${percent.format(wins / entries.length)}` : issue ?? "No matches";
     label.append(node("strong", device.name), node("span", summary, "technical"));
     const bar = node("div", null, "win-bar");
     bar.setAttribute("role", "img");
@@ -396,6 +404,7 @@ function renderWinShares() {
 function renderComparison() {
   const available = state.comparisons.filter((entry) =>
     state.comparisonDevice === "all" || entry.device.id === state.comparisonDevice);
+  showComparisonNotice("comparison-notice", state.comparisonDevice === "all" ? [] : available.map((entry) => entry.linux?.run));
   for (const option of comparisonApi.options) {
     option.disabled = Boolean(option.value && !available.some((entry) => entry.api.id === option.value));
   }
@@ -590,6 +599,7 @@ function render(resetMetrics = false, requestedMetric = metricSelect.value) {
   byId("workload-title").textContent = TEST_NAMES[row.test] ?? row.test;
   byId("workload-detail").textContent = [row.test, ...params, row.mode].join(" · ");
   byId("direction").textContent = relativeView ? "Metal = 1×" : shape ? `${unitName(shape.unit)} · ${shape.better} is better` : "";
+  showComparisonNotice("inspector-comparison-notice", series.map((entry) => entry.run));
   renderLegend(series);
   renderMeasurements(series);
   renderRecords(series);
@@ -679,7 +689,8 @@ function renderRecords(series) {
       description.title = `Results SHA-256: ${display.sha256}`;
       entry.append(description, node("time", dateFormat.format(new Date(display.date)), "technical"));
       entry.lastChild.dateTime = display.date;
-      const note = api.run ? display.note : ["No rows for this workload.", display.note].filter(Boolean).join(" ");
+      const note = [display.comparisonIssue && `${display.comparisonIssue}. Excluded from Metal comparisons.`,
+        !api.run && "No rows for this workload.", display.note].filter(Boolean).join(" ");
       if (note) entry.append(node("span", note, "run-note"));
       const source = publicLink(display.source);
       if (source) {

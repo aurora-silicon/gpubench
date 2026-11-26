@@ -28,7 +28,7 @@ export function geometricMeanRatio(ratios) {
 }
 
 export function canCompare(run) {
-  return Boolean(run?.suite && !run.suite.includes("+dirty"));
+  return Boolean(run?.suite && !run.suite.includes("+dirty") && !run.comparisonIssue);
 }
 
 function indexResults(runs) {
@@ -69,8 +69,9 @@ function compareSources(linuxSources, metalSources) {
   const metal = metalSources?.eligible ?? metalSources?.latest;
   const linuxMetric = metricFor(linux);
   const metalMetric = metricFor(metal);
-  let reason;
+  let reason = linux?.run.comparisonIssue ?? metal?.run.comparisonIssue;
   let ratio = null;
+  if (reason) return { linux, metal, linuxMetric, metalMetric, reason, ratio };
   if (!linux || !metal) reason = linux ? "Metal missing" : "Linux missing";
   else if (linux.duplicate || metal.duplicate) reason = "Duplicate result key";
   else if (linuxMetric && metalPipelineUnsupported(metal.row)) reason = "Vulkan only · Metal unsupported";

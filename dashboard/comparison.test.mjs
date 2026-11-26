@@ -134,3 +134,17 @@ test("a recorded Metal skip for a Vulkan ray-tracing pipeline is unsupported", (
   const laterMetal = run("metal", [scene("pipeline", "ok")], { date: "2026-11-22" });
   assert.equal(buildComparisons([linux, metal, laterMetal])[0].ratio, 1);
 });
+
+test("flagged clock-cap measurements stay inspectable and cannot affect scores", () => {
+  const reason = "Suspect S1 GPU clock cap";
+  const flagged = run("vulkan", [result(220)], { comparisonIssue: reason });
+  const metal = run("metal", [result(200)]);
+  const [comparison] = buildComparisons([flagged, metal]);
+  assert.equal(comparison.ratio, null);
+  assert.equal(comparison.linuxMetric.median, 220);
+  assert.equal(comparison.reason, reason);
+  assert.equal(buildComparisons([flagged])[0].reason, reason);
+
+  const verified = run("vulkan", [result(230)], { date: "2026-11-22" });
+  assert.equal(buildComparisons([flagged, metal, verified])[0].ratio, 1.15);
+});
