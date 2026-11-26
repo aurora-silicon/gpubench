@@ -25,6 +25,7 @@ ROWS = [
     ("vk", "render.bindless_ubo", 1, ["mode=ubo_vec4", "draws=512"]),
 ]
 ORDERS = ["ABBA", "BAAB"] * 2
+LEVELS = ["PASS", "FLAG", "FAIL"]
 
 
 class Flag(Exception):
@@ -118,6 +119,80 @@ class KernelJournal:
             yield
         finally:
             self.drain()
+
+
+class GpuClients:
+    """GPU time used by other DRM clients, read from /proc fdinfo between steps.
+
+    One client is one open of a DRM device (drm-client-id). Every process that
+    inherited the descriptor shows the same client, so it is counted once. The
+    drm-engine-<name> keys hold the client's accumulated time on each engine.
+    Processes of other users cannot be read and are not counted. A driver
+    without engine keys shows no time, so the check cannot flag there.
+    """
+
+    # One percent of the GPU can move a timing case by about 1 %, a fifth of
+    # the 5 % floor.
+    LIMIT = 0.01
+    clock = staticmethod(time.monotonic)
+
+    def __init__(self, summary):
+        self.findings, self.flagged = summary["findings"], False
+        scan = time.monotonic()
+        self.known, self.since = self.snapshot(), self.clock()
+        self.record = summary["gpu_clients"] = dict(
+            at_start=[dict(client=cid, **c) for cid, c in sorted(self.known.items())], intervals=[],
+            checks=1, scan_s=round(time.monotonic() - scan, 3))
+
+    @staticmethod
+    def snapshot(root=Path("/proc")):
+        own = os.getpid()
+        clients = {}
+        # In PID order, so a shared client is named after its lowest process: usually the opener.
+        for proc in sorted((p for p in root.iterdir() if p.name.isdigit()), key=lambda p: int(p.name)):
+            if int(proc.name) == own:
+                continue
+            try:
+                for fd in (proc / "fd").iterdir():
+                    if not os.readlink(fd).startswith("/dev/dri/"):
+                        continue
+                    keys = dict(line.split(":", 1) for line in
+                                (proc / "fdinfo" / fd.name).read_text().splitlines() if ":" in line)
+                    cid = keys.get("drm-client-id", "").strip()
+                    if not cid or cid in clients:
+                        continue
+                    busy = sum(int(value.split()[0]) for key, value in keys.items()
+                               if re.fullmatch(r"drm-engine-[a-z0-9_]+", key) and value.split()[1:] == ["ns"])
+                    clients[cid] = dict(comm=(proc / "comm").read_text().strip(), pid=int(proc.name), busy_ns=busy)
+            except (OSError, ValueError):  # Exited, or owned by another user.
+                continue
+        return clients
+
+    def check(self, arm, step):
+        scan = time.monotonic()
+        now, at = self.snapshot(), self.clock()
+        self.record["checks"] += 1
+        self.record["scan_s"] = round(self.record["scan_s"] + time.monotonic() - scan, 3)
+        wall = at - self.since
+        used = {cid: c["busy_ns"] - self.known.get(cid, {"busy_ns": 0})["busy_ns"] for cid, c in now.items()}
+        used = {cid: ns for cid, ns in used.items() if ns > 0}
+        started = sorted(set(now) - set(self.known))
+        exited = sorted(set(self.known) - set(now))
+        if used or started or exited:
+            name = lambda cid, table: f"{table[cid]['comm']}[{table[cid]['pid']}]"
+            self.record["intervals"].append(dict(
+                arm=arm, step=step, wall_s=round(wall, 3),
+                used_ms={name(cid, now): round(ns / 1e6, 3) for cid, ns in used.items()},
+                started=[name(cid, now) for cid in started], exited=[name(cid, self.known) for cid in exited]))
+            total = sum(used.values()) / 1e9
+            # A gap shorter than a second is judged against one second, so a
+            # compositor frame in a short gap between steps cannot flag.
+            if total > self.LIMIT * max(wall, 1.0) and not self.flagged:  # Later ones stay in the record.
+                self.flagged = True
+                self.findings.append(("FLAG", f"other GPU clients used {total * 1e3:.1f} ms of GPU time "
+                                              f"in {wall:.1f} s by the end of {arm} {step} "
+                                              f"({', '.join(name(cid, now) for cid in used)})"))
+        self.known, self.since = now, at
 
 
 def digest(path):
@@ -330,24 +405,34 @@ def gate(args, summary):
     bins = {api: args.bin.resolve() / f"gpubench-{api}" for api in ("gl", "vk")}
     summary["executors_sha256"] = {api: digest(exe) for api, exe in bins.items()}
     journal = KernelJournal(summary["kernel_faults"])
+    clients = GpuClients(summary)
+
+    @contextmanager
+    def observe(arm, step):
+        # Between steps only other workloads can hold the GPU open.
+        clients.check(journal.last_arm, journal.last_step)
+        with journal.observe(arm, step):
+            yield
 
     try:
-        return compare(args, summary, out, envs, bins, journal)
+        verdict = compare(args, summary, out, envs, bins, observe)
     finally:
         journal.drain()  # Include teardown after the last arm and before the verdict.
+        clients.check(journal.last_arm, journal.last_step)
+    return max([verdict, *(status for status, _ in summary["findings"])], key=LEVELS.index)
 
 
-def compare(args, summary, out, envs, bins, journal):
+def compare(args, summary, out, envs, bins, observe):
     def run(row, arm, stage):
         api, name, _, _ = row
-        with journal.observe(arm, f"{api}/{name}/{stage}"):
+        with observe(arm, f"{api}/{name}/{stage}"):
             return measure(row, arm, bins[api], envs[arm], out, stage)
 
     identities = summary["identity"] = {}
     for arm, (sha, _) in (("A", args.base), ("B", args.candidate)):
         identities[arm] = {}
         for api, exe in bins.items():
-            with journal.observe(arm, f"{api}/info"):
+            with observe(arm, f"{api}/info"):
                 identities[arm][api] = info(exe, api, envs[arm], sha, out / "executors.log", arm)
     for api, field in (("gl", "renderer"), ("vk", "device_name")):
         if identities["A"][api][field] != identities["B"][api][field]:
@@ -361,7 +446,7 @@ def compare(args, summary, out, envs, bins, journal):
         if crc["A"] != crc["B"]:
             findings.append(("FLAG", f"{api}/{name}: CRC changed within oracle tolerance"))
     if args.traces:
-        replay(args.traces, device, envs, out, summary["replays"], journal.observe)
+        replay(args.traces, device, envs, out, summary["replays"], observe)
     if not args.visual_only:
         for row in ROWS:
             api, name, _, _ = row
@@ -375,7 +460,7 @@ def compare(args, summary, out, envs, bins, journal):
             summary["perf"][f"{api}/{name}"] = stats
             if stats["verdict"] != "PASS":
                 findings.append((stats["verdict"], f"{api}/{name}: timing"))
-    return max((status for status, _ in findings), key=["PASS", "FLAG", "FAIL"].index, default="PASS")
+    return max((status for status, _ in findings), key=LEVELS.index, default="PASS")
 
 
 def main():
