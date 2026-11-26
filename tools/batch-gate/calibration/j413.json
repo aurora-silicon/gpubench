@@ -1,0 +1,36 @@
+{
+  "board": "apple,j413",
+  "kernel": "7.3.0-aurora-fleet89",
+  "kernel_notes_sha256": "4667fa5086392e0298e26c372c2a1233da03083ff35b9d6b69e9ca21bad70c15",
+  "mesa": "be147e3625",
+  "boot_ids": [
+    "eecf1a18-8d80-491c-a51d-9725081f252d",
+    "8d63e5eb-0ab7-4e13-835e-685d5f5ac1e8"
+  ],
+  "input_verdicts": [
+    "PASS",
+    "PASS"
+  ],
+  "cases": {
+    "gl/render.postfx": {
+      "boot1_us": 1448.4639499999998,
+      "boot2_us": 1451.785975,
+      "change": 0.0022934813117028163
+    },
+    "vk/render.postfx": {
+      "boot1_us": 2340.841225,
+      "boot2_us": 2334.64215,
+      "change": -0.002648225319083708
+    },
+    "vk/compute.fp16": {
+      "boot1_us": 296.254075,
+      "boot2_us": 296.75210000000004,
+      "change": 0.0016810739227808291
+    },
+    "vk/render.bindless_ubo": {
+      "boot1_us": 898.65805,
+      "boot2_us": 910.5908999999999,
+      "change": 0.013278521235079221
+    }
+  }
+}
