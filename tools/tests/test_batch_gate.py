@@ -312,10 +312,11 @@ def test_gpu_clients_snapshot_survives_bad_input(tmp_path):
 
 
 def gate_with_clients(tmp_path, monkeypatch, snapshots, measure=lambda *args: "aabbccdd", tick=2.0,
-                      hidden=None):
+                      hidden=None, starts=(1000, 1000)):
     """Run a visual-only gate in which every check sees the next GPU client table, tick s apart.
 
-    hidden is the pair of tables root sees at the start and the end, or "no sudo".
+    hidden is the pair of tables root sees at the start and the end, or "no sudo". starts are the
+    process start times read at the start and at the end; None means the process has ended.
     """
     from types import SimpleNamespace
     monkeypatch.setattr(gate.KernelJournal, "read",
@@ -329,6 +330,11 @@ def gate_with_clients(tmp_path, monkeypatch, snapshots, measure=lambda *args: "a
         return table, list(last.get("errors", [])), [1] if hidden else []
     ticks = (n * tick for n in range(10**6))
     views = iter(hidden if isinstance(hidden, list) else [])
+    calls = {}
+    def process_start(pid, root=None):  # The gate reads each PID once at the start and once at the end.
+        calls[pid] = calls.get(pid, -1) + 1
+        return starts[calls[pid]]
+    monkeypatch.setattr(gate.GpuClients, "process_start", staticmethod(process_start))
     monkeypatch.setattr(gate.GpuClients, "snapshot", staticmethod(snapshot))
     monkeypatch.setattr(gate.GpuClients, "clock", staticmethod(lambda: next(ticks)))
     monkeypatch.setattr(gate.GpuClients, "privileged",
@@ -409,7 +415,7 @@ def test_unreadable_compositor_is_read_through_sudo(tmp_path, monkeypatch, ms, e
     verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, end])
     assert verdict == expected
     unreadable = summary["gpu_clients"]["unreadable"]
-    assert unreadable["at_start"] == [dict(client="9", **client("kwin_wayland", 2114, 500))]
+    assert unreadable["at_start"] == [dict(client="9", started=1000, **client("kwin_wayland", 2114, 500))]
     assert unreadable["used_ms"] == {"kwin_wayland[2114]": ms}
 
 
@@ -434,12 +440,56 @@ def test_without_sudo_the_run_is_inconclusive(tmp_path, monkeypatch):
     assert summary["gpu_clients"]["unreadable"].startswith("not read")
 
 
-def test_unreadable_client_exiting_mid_run_flags(tmp_path, monkeypatch):
-    start = dict(clients={"9": client("kwin_wayland", 2114, 500)}, errors=[])
+@pytest.mark.parametrize("starts,verdict,field", [
+    ((1000, 1000), "PASS", "closed"),  # The compositor closed one client and kept running.
+    ((1000, None), "FLAG", "exited"),  # The process ended: its use after the first read is unknown.
+    ((1000, 2000), "FLAG", "exited"),  # A later process reused the PID.
+    ((None, None), "FLAG", "exited"),  # Its start time could not be read.
+])
+def test_unreadable_client_gone_at_end(tmp_path, monkeypatch, starts, verdict, field):
+    start = dict(clients={"9": client("geekbench_aarch", 2114, 500)}, errors=[])
     end = dict(clients={}, errors=[])
-    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, end])
+    result, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, end], starts=starts)
+    assert result == verdict
+    assert summary["gpu_clients"]["unreadable"][field] == ["geekbench_aarch[2114] client 9"]
+
+
+def write_stat(root, pid, name, state, start):
+    (root / str(pid)).mkdir(exist_ok=True)
+    (root / str(pid) / "stat").write_bytes(b"%d (%s) %s 1 7 7 0 -1 4194560 " % (pid, name, state) +
+                                           b" ".join([b"0"] * 12) + b" %d 0\n" % start)
+
+
+@pytest.mark.parametrize("name", [b"odd) name", "aゲームゲームゲ".encode()[:15]])
+def test_process_start_reads_field_22(tmp_path, name):
+    # A name with spaces, a parenthesis or broken UTF-8 must not shift the fields.
+    write_stat(tmp_path, 7, name, b"S", 424242)
+    assert gate.GpuClients.process_start(7, tmp_path) == 424242
+    assert gate.GpuClients.process_start(8, tmp_path) is None
+
+
+@pytest.mark.parametrize("state", [b"Z", b"X"])
+def test_unreaped_process_counts_as_ended(tmp_path, monkeypatch, state):
+    # An exited, unreaped GB6 keeps /proc/<pid>/stat and its start time.
+    write_stat(tmp_path, 4915, b"geekbench_aarch", b"R", 1000)
+    real = gate.GpuClients.process_start
+    started = real(4915, tmp_path)
+    write_stat(tmp_path, 4915, b"geekbench_aarch", state, 1000)
+    assert real(4915, tmp_path) is None
+    start = dict(clients={"30": client("geekbench_aarch", 4915, 500)}, errors=[])
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, dict(clients={}, errors=[])],
+                                         starts=(started, real(4915, tmp_path)))
     assert verdict == "FLAG"
-    assert summary["gpu_clients"]["unreadable"]["exited"] == ["kwin_wayland[2114] client 9"]
+    assert summary["gpu_clients"]["unreadable"]["exited"] == ["geekbench_aarch[4915] client 30"]
+
+
+def test_helper_start_time_is_kept(tmp_path, monkeypatch):
+    # The sudo helper reads the start time with the client; the gate does not read it again.
+    start = dict(clients={"9": dict(client("kwin_wayland", 2114, 0), started=1000)}, errors=[])
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, dict(clients={}, errors=[])],
+                                         starts=(1000,))
+    assert verdict == "PASS"
+    assert summary["gpu_clients"]["unreadable"]["closed"] == ["kwin_wayland[2114] client 9"]
 
 
 def test_foreign_gpu_time_keeps_a_candidate_failure(tmp_path, monkeypatch):

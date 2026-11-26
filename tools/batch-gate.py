@@ -149,6 +149,11 @@ class GpuClients:
         self.seen = {cid: c["busy_ns"] for cid, c in self.known.items()}
         self.record["at_start"] = [dict(client=cid, **c) for cid, c in sorted(self.known.items())]
         self.start, self.hidden_start = self.since, self.privileged()
+        hidden = (self.hidden_start or {}).get("clients", {}).values()
+        # The helper reads each start time with its client; read here only what it left out.
+        started = {pid: self.process_start(pid) for pid in {c["pid"] for c in hidden if "started" not in c}}
+        for c in hidden:
+            c.setdefault("started", started.get(c["pid"]))
 
     @staticmethod
     def snapshot(root=Path("/proc")):
@@ -210,6 +215,22 @@ class GpuClients:
         except (OSError, ValueError, subprocess.SubprocessError):
             return None
 
+    @staticmethod
+    def process_start(pid, root=Path("/proc")):
+        """Start time of a running process in clock ticks since boot, or None.
+
+        /proc/<pid>/stat is readable by every user. The start time tells a
+        running process apart from a later one that reused its PID. An exited
+        process that is not yet reaped keeps its entry and start time, so its
+        state (Z or X) counts as ended.
+        """
+        try:
+            stat = root.joinpath(str(pid), "stat").read_bytes()
+            fields = stat.rpartition(b")")[2].split()  # The name may hold any bytes.
+            return None if fields[0] in (b"Z", b"X") else int(fields[19])  # Fields 3 and 22.
+        except (OSError, IndexError, ValueError):
+            return None
+
     def flag(self, kind, message):
         if kind == "unreadable" and message not in self.record["errors"]:
             self.record["errors"].append(message)
@@ -262,11 +283,20 @@ class GpuClients:
         before = {cid: c for cid, c in self.hidden_start["clients"].items() if cid not in self.seen}
         after = {cid: c for cid, c in end["clients"].items() if cid not in self.seen}
         used = self.charge(after, {cid: c["busy_ns"] for cid, c in before.items()})
-        gone = [f"{c['comm']}[{c['pid']}] client {cid}" for cid, c in sorted(before.items()) if cid not in after]
+        # A closed client whose process still runs is recorded only. If the
+        # process ended, its use after the first read is unknown, as for a
+        # benchmark that outlived its lock.
+        closed, gone = [], []
+        missing = {cid: c for cid, c in sorted(before.items()) if cid not in after}
+        now = {pid: self.process_start(pid) for pid in {c["pid"] for c in missing.values()}}
+        for cid, c in missing.items():
+            running = c["started"] is not None and now[c["pid"]] == c["started"]
+            (closed if running else gone).append(f"{c['comm']}[{c['pid']}] client {cid}")
         self.record["unreadable"] = dict(at_start=[dict(client=cid, **c) for cid, c in sorted(before.items())],
-                                         used_ms={k: round(ns / 1e6, 3) for k, ns in used.items()}, exited=gone)
-        if gone:  # Its use after the first read is unknown.
-            self.flag("unreadable", f"a GPU client the gate cannot read directly exited during the run "
+                                         used_ms={k: round(ns / 1e6, 3) for k, ns in used.items()},
+                                         closed=closed, exited=gone)
+        if gone:
+            self.flag("unreadable", f"a process holding a GPU client the gate cannot read directly ended during the run "
                                     f"({', '.join(gone)})")
         for error in self.hidden_start["errors"] + end["errors"]:
             self.flag("unreadable", f"cannot read the GPU time of another DRM client ({error})")
@@ -279,6 +309,8 @@ class GpuClients:
 def gpu_clients_main():
     """Read-only helper run through sudo: print every DRM client as JSON."""
     clients, errors, _ = GpuClients.snapshot()
+    for c in clients.values():
+        c["started"] = GpuClients.process_start(c["pid"])
     print(json.dumps(dict(clients=clients, errors=errors)))
     return 0
 
