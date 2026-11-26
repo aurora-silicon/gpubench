@@ -175,3 +175,52 @@ def test_cs2_receipt_demands_visible_source_regression(tmp_path):
     result = importer.assemble(manifest,src)
     out = result["captures"][-1]
     assert out["file"] == str(trace) and out["frames"]["3"]["file"] == str(good)
+
+
+def fake_kit_inputs(tmp_path, monkeypatch):
+    import hashlib
+    kit = load("fleet-kit.py")
+    corpus, bins, caps = tmp_path/"corpus", tmp_path/"bin", tmp_path/"caps"
+    for d in (corpus/"goldens/b1", bins, caps):
+        d.mkdir(parents=True)
+    for name in ("gpubench-gl", "gpubench-vk", "gfxrecon-replay", "eglretrace"):
+        (bins/name).write_bytes(name.encode())
+    (caps/"t.gfxr").write_bytes(b"capture")
+    (corpus/"goldens/b1/t.png").write_bytes(b"png")
+    h = lambda b: hashlib.sha256(b).hexdigest()
+    manifest = {"device":"GPU","captures":[{"file":"t.gfxr","sha256":h(b"capture"),
+                "frames":{"1":{"file":"goldens/b1/t.png","sha256":h(b"png")}},
+                "replayer":{"sha256":h(b"gfxrecon-replay"),"version":"v"}}]}
+    dump(corpus/"b1.json", manifest)
+    monkeypatch.setattr(kit, "CORPUS", corpus)
+    return kit, bins, caps
+
+
+def test_fleet_kit_is_reproducible_and_complete(tmp_path, monkeypatch):
+    import tarfile
+    kit, bins, caps = fake_kit_inputs(tmp_path, monkeypatch)
+    for name in ("a", "b"):
+        kit.main(["--boards","b1","--bin",str(bins),"--captures",str(caps),"--out",str(tmp_path/f"{name}.tar.gz")])
+    assert (tmp_path/"a.tar.gz").read_bytes() == (tmp_path/"b.tar.gz").read_bytes()
+    with tarfile.open(tmp_path/"a.tar.gz") as tar:
+        names = set(tar.getnames())
+        assert {"fleet/fleet_row.py","fleet/batch-gate.py","fleet/bin/gpubench-vk","fleet/bin/gfxrecon-replay",
+                "fleet/corpus/b1.json","fleet/corpus/t.gfxr","fleet/corpus/goldens/b1/t.png","fleet/SHA256SUMS"} <= names
+        assert tar.getmember("fleet/bin/gpubench-vk").mode == 0o755
+        sums = tar.extractfile("fleet/SHA256SUMS").read().decode()
+    assert "./corpus/goldens/b1/t.png" in sums and "./bin/gfxrecon-replay" in sums
+    with pytest.raises(FileExistsError):
+        kit.main(["--boards","b1","--bin",str(bins),"--captures",str(caps),"--out",str(tmp_path/"a.tar.gz")])
+
+
+@pytest.mark.parametrize("broken,reason", [
+    ("bin/gfxrecon-replay", "not the replayer"),
+    ("caps/t.gfxr", "not the capture"),
+    ("corpus/goldens/b1/t.png", "golden differs"),
+])
+def test_fleet_kit_refuses_what_the_manifest_does_not_pin(tmp_path, monkeypatch, broken, reason):
+    kit, bins, caps = fake_kit_inputs(tmp_path, monkeypatch)
+    (tmp_path/broken).write_bytes(b"other")
+    with pytest.raises(ValueError, match=reason):
+        kit.main(["--boards","b1","--bin",str(bins),"--captures",str(caps),"--out",str(tmp_path/"k.tar.gz")])
+    assert not (tmp_path/"k.tar.gz").exists()

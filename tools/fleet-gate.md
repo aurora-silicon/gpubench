@@ -11,6 +11,39 @@ python3 tools/train-gate.py dispatch --kind mesa --tree "$MESA_REPO" \
 
 The trusted local workers JSON maps each board to a command argv, e.g. `{"j700":["/opt/rows/queue-neo"],"j773g":["/opt/rows/queue-mini"]}`. These are site-owned commands. Each receives two additional arguments, the absolute job directory and board. Dispatch starts both commands, waits up to 900 seconds by default, and posts or edits one line on the last PR. A delayed owner can finish its restore after the wait expires. Run `finish JOB --post` to update the same comment. Use `--no-post` to rehearse. For leads using a message-based queue, replace `dispatch` with `enqueue`, omit `--workers`, send the printed job path to both leads, then call `finish`. The job ID binds the base, candidate, expected tree, ordered PR heads and board set. Publication rechecks the live baseline and all PR heads.
 
+## Kit and staging
+
+Build one kit per replayer set on the host, from the gpubench commit under test:
+
+```sh
+python3 tools/fleet-kit.py --boards j700 j773g --bin "$BENCH_AND_REPLAYERS" \
+  --captures "$CAPTURES" --libs "$REPLAYER_LIBS" --out kit-fleet-$(git rev-parse --short HEAD).tar.gz
+```
+
+- **Contents:** `fleet/fleet_row.py`, `fleet/batch-gate.py`, the executors and replayers in `fleet/bin`, each board's manifest, captures and goldens in `fleet/corpus`, and `fleet/SHA256SUMS`.
+- **Pinning:** the tool refuses a capture, golden or replayer that differs from what a board's manifest pins. Boards that pin different replayers (J316s and J413 use GFXReconstruct 1.0.5, J700 and J773g 0.9.18) need separate kits.
+- **Naming:** the same inputs give a byte-identical tarball, and an existing file is never replaced. Hand the kit over by path and sha256.
+
+On the Mac:
+1. Check the tarball's sha256 and extract it with `tar --no-same-owner`.
+2. Run `sha256sum -c SHA256SUMS` inside `fleet/`.
+3. Copy the job's `request.json` unmodified.
+
+Stage each Mesa build as an isolated install and describe it with an environment JSON:
+
+```json
+{"LD_LIBRARY_PATH": "<install>/usr/lib64:<kit>/fleet/replaylibs",
+ "LIBGL_DRIVERS_PATH": "<install>/usr/lib64/dri", "GBM_BACKENDS_PATH": "<install>/usr/lib64/gbm",
+ "VK_DRIVER_FILES": "<install>/icd.json", "__EGL_VENDOR_LIBRARY_FILENAMES": "<install>/egl.json",
+ "MESA_SHADER_CACHE_DIR": "<install>/cache", "MESA_LOADER_DRIVER_OVERRIDE": "asahi"}
+```
+
+- **ICD and EGL files:** `icd.json` names the install's `libvulkan_asahi.so` and `egl.json` its `libEGL_mesa.so.0`.
+- **Identity check:** the gate requires `git-<revision>` from the requested SHA in both the GL and the Vulkan info strings, Borealis as the Vulkan driver, and native (not zink or software) GL.
+- **Running:** put `fleet/bin` first in `PATH`.
+- **Before each run:** check that no other GPU workload is running and that no unit has failed.
+- **After the row:** remove the kit, the request copy and the installs from the Mac.
+
 ## Mesa lead
 
 Under the existing lease, stage both native Mesa builds and the enrolled corpus. Copy the job's unmodified `request.json` to the Mac and use two overlay environment JSON files as in the batch-gate instructions. Write into a fresh result directory.

@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 
-BOARDS = {"j700", "j773g", "j714s", "j516s"}
+BOARDS = {"j700", "j773g", "j714s", "j516s", "j316s", "j413"}
 RESULT_CODES = {"PASS": 0, "FLAG": 2, "FAIL": 1}
 
 
