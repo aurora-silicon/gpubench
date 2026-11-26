@@ -44,7 +44,7 @@ def golden(shot, reference, gl):
         actual, ref = a.convert("RGB"), b.convert("RGB")
     if actual.size != ref.size:
         raise ValueError(f"{shot}: dimensions differ")
-    delta = ImageChops.difference(actual, ref).convert("L")
+    delta = gate.channel_difference(actual, ref)
     fraction = gate.bad_fraction(delta)
     if gl:
         bg = Image.new("RGB", ref.size, ref.getpixel((0, 0)))
@@ -83,7 +83,9 @@ def enroll(args, env, device):
             path = dest / (Path(name).stem + ".png")
             im.save(path)
             refs[n] = dict(file=str(path.relative_to(corpus)), sha256=gate.digest(path))
-        cases.append(dict(file=trace, sha256=gate.digest(file), frames=refs))
+        exe = shutil.which(cmd[0], path=env["PATH"])
+        cases.append(dict(file=trace, sha256=gate.digest(file), frames=refs,
+                          replayer=gate.replayer_identity(exe, env)))
     write(corpus / (args.board + ".json"), dict(device=device, captures=cases))
 
 
