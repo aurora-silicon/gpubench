@@ -139,18 +139,89 @@ def test_empty_benchmark_crash(arm, issue, tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("arm,issue", [("A", gate.Flag), ("B", gate.Regression)])
 def test_kernel_fault_attribution(arm, issue, monkeypatch):
-    calls = []
+    line = "asahi 404000000.gpu: GPU work of a client failed (ETIMEDOUT)"
+    entry = {"MESSAGE":line, "__CURSOR":"boot:124", "__MONOTONIC_TIMESTAMP":"110",
+             "__REALTIME_TIMESTAMP":"999", "_SOURCE_MONOTONIC_TIMESTAMP":"100"}
+    data = []
     def read(self, *args):
-        calls.append(args)
         if "--show-cursor" in args:
-            return "GPU fault in old log\n-- cursor: boot:123\n"
+            return "old fault\n-- cursor: boot:123\n"
         assert args == ("--after-cursor", "boot:123", "-o", "json")
-        return '\n'.join(json.dumps({"MESSAGE": m}) for m in
-                         ("wifi: timeout", "asahi 404000000.gpu: GPU work of a client failed (ETIMEDOUT)"))
+        return "\n".join(map(json.dumps, data))
     monkeypatch.setattr(gate.KernelJournal, "read", read)
     evidence = []
     journal = gate.KernelJournal(evidence)
     with pytest.raises(issue), journal.observe(arm, "postfx"):
-        pass
+        data.append(entry)
+        raise subprocess.TimeoutExpired("benchmark", 40)
     assert evidence == [dict(arm=arm, step="postfx", cursor="boot:123",
-                             lines=["asahi 404000000.gpu: GPU work of a client failed (ETIMEDOUT)"])]
+                             lines=[dict(message=line, cursor="boot:124",
+                                         monotonic_us="100", realtime_us="999")])]
+
+
+@pytest.mark.parametrize("message,is_fault", [
+    ("apple-drm display-subsystem: [drm] *ERROR* [CRTC:41:crtc-0] flip_done timed out", False),
+    ("ane_t8140 neural-processor: [drm] *ERROR* program teardown failed -110; session quarantined", False),
+    ("coredump: N(kboot-gpu-g15): RLIMIT_CORE is set to 1, aborting core", False),
+    ("aurora-g17 404000000.gpu: G17: fail-stop (ETIMEDOUT)", True),
+    ("asahi 404000000.gpu: GPU fault info", True),
+    ("G17: recovery MMU fault banks unreadable", True),
+    ("aurora-g16 40e000000.gpu: G16: fault bank 0", True),
+])
+def test_gpu_source(message,is_fault):
+    assert gate.gpu_fault({"MESSAGE":message,"PRIORITY":"3"}) is is_fault
+
+
+@pytest.mark.parametrize("boundary", ["next_step", "final"])
+def test_late_kernel_fault_stays_with_previous_arm(monkeypatch, boundary):
+    entries = []
+    def read(self, *args):
+        if "--show-cursor" in args:
+            return "-- cursor: 0"
+        cursor = int(args[1])
+        return "\n".join(json.dumps({"__CURSOR":str(i+1),"__MONOTONIC_TIMESTAMP":str(i+1),
+                                      "__REALTIME_TIMESTAMP":"1000","MESSAGE":msg})
+                          for i,msg in enumerate(entries) if i+1 > cursor)
+    monkeypatch.setattr(gate.KernelJournal, "read", read)
+    evidence = []
+    journal = gate.KernelJournal(evidence)
+    with journal.observe("B", "replay"):
+        entries.append("wifi: ordinary event")
+    assert journal.last_cursor == "1"
+    entries.append("aurora-g16 404000000.gpu: fault bank 0")
+    with pytest.raises(gate.Regression):
+        if boundary == "final":
+            journal.drain()
+        else:
+            with journal.observe("A","next"):
+                pytest.fail("late candidate fault should stop before A")
+    assert evidence[0]["arm"] == "B" and evidence[0]["lines"][0]["monotonic_us"] == "2"
+    journal.drain()
+    assert len(evidence) == 1
+
+
+def test_adapter_timeout_kills_descendant(tmp_path):
+    import os
+    import sys
+    import time
+    spec = importlib.util.spec_from_file_location("bisect_batch", Path(__file__).parents[1]/"bisect-batch.py")
+    bisect = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bisect)
+    pidfile = tmp_path/"pid"
+    script = ("import subprocess,sys,time; from pathlib import Path; "
+              "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+              "Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(30)")
+    with pytest.raises(subprocess.TimeoutExpired):
+        bisect.run_adapter([sys.executable,"-c",script,str(pidfile)], 1)
+    pid = int(pidfile.read_text())
+    status = Path(f"/proc/{pid}/stat")
+    for _ in range(50):
+        try:
+            if status.read_text().split()[2] == "Z":
+                break
+        except FileNotFoundError:
+            break
+        time.sleep(0.01)
+    else:
+        os.kill(pid, 9)
+        pytest.fail("timed-out adapter left its child running")

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Run a batch row. On failure, isolate the first failing first-parent prefix."""
 import argparse
+import os
+import signal
 import subprocess
 import sys
 
@@ -35,6 +37,19 @@ def diagnose(commits, run):
     return 1, f"FAIL: {commits[good]} passes, next prefix {commits[bad]} fails"
 
 
+def run_adapter(command, timeout):
+    with subprocess.Popen(command, start_new_session=True) as proc:
+        try:
+            return proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+            raise
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--adapter-timeout", type=int, default=900, metavar="SECONDS")
@@ -55,7 +70,7 @@ def main():
         if not prefixes or git("rev-parse", prefixes[0] + "^1") != base:
             p.error("base must precede tip on the same first-parent train")
         def run(a, b):
-            return subprocess.run([*args.command, a, b], timeout=args.adapter_timeout).returncode
+            return run_adapter([*args.command, a, b], args.adapter_timeout)
         rc, msg = diagnose([base, *prefixes], run)
     except (OSError, subprocess.SubprocessError) as exc:
         rc, msg = 2, f"FLAG: {exc}"

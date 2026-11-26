@@ -44,7 +44,7 @@ def arm_error(arm, message):
 
 
 # Kernel MESSAGE only (no hostname). Ignore firmware inventory at boot.
-GPU_SOURCE = re.compile(r"^(?:aurora|asahi)[: ]|\bg(?:13|14|15|16|17|18)\b|\.gpu: |\b(?:agx|drm)\b", re.I)
+GPU_SOURCE = re.compile(r"\.gpu: |^(?:aurora|asahi)(?:-g1[3-8]\w*)?[: ]|^G1[3-8]\w*: ", re.I)
 GPU_EVENT = re.compile(r"GPU work .*failed|ETIMEDOUT|lost device|device lost|client failed|"
                        r"timed? ?out|\bfault|pagefault|unhealthy|channel.?error|firmware (?:crash|panic)|"
                        r"recover(?:y|ed)|guilty|\bhang|restart storm|setup failed|service failed|"
@@ -57,19 +57,19 @@ def gpu_fault(entry):
         return False
     if re.search(r"G17: (?:crash logs from the firmware data segment|no fw-data region from the boot loader)", msg):
         return False
-    return bool(re.search(r"GPU (?:fault|work .*failed)|lost device|device lost", msg, re.I)
-                or (GPU_SOURCE.search(msg) and (GPU_EVENT.search(msg) or int(entry.get("PRIORITY", 6)) <= 4)))
+    return bool(GPU_SOURCE.search(msg) and (GPU_EVENT.search(msg) or int(entry.get("PRIORITY", 6)) <= 4))
 
 
 class KernelJournal:
     def __init__(self, evidence):
         self.evidence = evidence
         self.command = ["journalctl"]
+        self.last_arm, self.last_step = "A", "preflight"
         try:
-            self.cursor()
+            self.last_cursor = self.cursor()
         except (Flag, OSError, subprocess.CalledProcessError):
             self.command = ["sudo", "-n", "journalctl"]
-            self.cursor()
+            self.last_cursor = self.cursor()
 
     def read(self, *args):
         return subprocess.check_output([*self.command, "-q", "-k", "-b", "--no-pager", *args],
@@ -83,26 +83,41 @@ class KernelJournal:
             raise Flag("cannot read current kernel journal cursor")
         return cursors[-1]
 
+    def drain(self):
+        # Advance only past entries we actually inspected. An empty read leaves
+        # the cursor untouched, including when journald delivers teardown events late.
+        arm, step, before = self.last_arm, self.last_step, self.last_cursor
+        pending = sys.exc_info()[1]
+        try:
+            lines = self.read("--after-cursor", before, "-o", "json")
+            entries = [json.loads(line) for line in lines.splitlines()]
+            faults = []
+            for entry in entries:
+                if gpu_fault(entry):
+                    faults.append(dict(message=entry["MESSAGE"], cursor=entry["__CURSOR"],
+                                       monotonic_us=entry.get("_SOURCE_MONOTONIC_TIMESTAMP",
+                                                              entry["__MONOTONIC_TIMESTAMP"]),
+                                       realtime_us=entry["__REALTIME_TIMESTAMP"]))
+            if entries:
+                self.last_cursor = entries[-1]["__CURSOR"]
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+            self.evidence.append(dict(arm=arm, step=step, error=str(exc)))
+            if not isinstance(pending, Regression):
+                raise Flag(f"{arm} {step}: cannot read kernel log") from exc
+            return
+        if faults:
+            self.evidence.append(dict(arm=arm, step=step, cursor=before, lines=faults))
+            if arm == "B" or not isinstance(pending, Regression):
+                raise arm_error(arm, f"{arm} {step}: new GPU fault in kernel log")
+
     @contextmanager
     def observe(self, arm, step):
-        before = self.cursor()
+        self.drain()  # Any inter-step events still belong to the previous GPU process.
+        self.last_arm, self.last_step = arm, step
         try:
             yield
         finally:
-            pending = sys.exc_info()[1]
-            try:
-                lines = self.read("--after-cursor", before, "-o", "json")
-                entries = [json.loads(line) for line in lines.splitlines()]
-                faults = [entry["MESSAGE"] for entry in entries if gpu_fault(entry)]
-            except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
-                self.evidence.append(dict(arm=arm, step=step, error=str(exc)))
-                if pending is None:
-                    raise Flag(f"{arm} {step}: cannot read kernel log") from exc
-            else:
-                if faults:
-                    self.evidence.append(dict(arm=arm, step=step, cursor=before, lines=faults))
-                    if not isinstance(pending, (subprocess.TimeoutExpired, BudgetExpired)):
-                        raise arm_error(arm, f"{arm} {step}: new GPU fault in kernel log")
+            self.drain()
 
 
 def digest(path):
@@ -305,6 +320,13 @@ def gate(args, summary):
     summary["executors_sha256"] = {api: digest(exe) for api, exe in bins.items()}
     journal = KernelJournal(summary["kernel_faults"])
 
+    try:
+        return compare(args, summary, out, envs, bins, journal)
+    finally:
+        journal.drain()  # Include teardown after the last arm and before the verdict.
+
+
+def compare(args, summary, out, envs, bins, journal):
     def run(row, arm, stage):
         api, name, _, _ = row
         with journal.observe(arm, f"{api}/{name}/{stage}"):
