@@ -104,6 +104,42 @@ def test_kernel_slowdown_needs_crossover_and_calibration(tmp_path):
     assert fleet.cross_boot(base,second,meta,path)[0] == "FAIL"
 
 
+def kernel_run(us, noise=0.01, **more):
+    perf = {k:{"median_us":{"A":us.get(k, 10),"B":us.get(k, 10)},"noise":noise} for k in fleet.CASES}
+    return dict({"executors_sha256":{"vk":"v"},"identity":{"A":"driver"},"crcs":{"test":"a"},
+                 "visual_only":False,"verdict":"PASS","requested_sha":{"A":"f"*40},"kernel":"base-build",
+                 "perf":perf}, **more)
+
+
+@pytest.mark.parametrize("candidate,restored,expected", [
+    ({}, {}, ("PASS", "three-boot crossover")),
+    # A 12 % candidate slowdown on one case.
+    ({"gl/render.postfx": 11.2}, {}, ("FLAG", "gl/render.postfx needs boot crossover")),
+    # The base build itself moved 6 % between its two boots.
+    ({}, {"vk/compute.fp16": 10.6}, ("FLAG", "vk/compute.fp16 needs boot crossover")),
+    # A steady drift across the three boots is not a candidate slowdown.
+    ({"vk/render.postfx": 10.2}, {"vk/render.postfx": 10.4}, ("PASS", "three-boot crossover")),
+])
+def test_kernel_three_boot_crossover(tmp_path, candidate, restored, expected):
+    # No calibration file: the restored boot of the base build supplies the floor.
+    meta = {"board":"j700","kernel_notes_sha256":"hash"}
+    result = fleet.cross_boot(kernel_run({}), kernel_run(candidate), meta, tmp_path/"none.json",
+                              kernel_run(restored))
+    assert result == expected
+
+
+def test_kernel_crossover_needs_a_clean_restored_boot(tmp_path):
+    meta = {"board":"j700","kernel_notes_sha256":"hash"}
+    base = kernel_run({})
+    assert fleet.cross_boot(base, kernel_run({}), meta, tmp_path/"none.json",
+                            kernel_run({}, verdict="FLAG"))[0] == "FLAG"
+    assert fleet.cross_boot(base, kernel_run({}), meta, tmp_path/"none.json",
+                            kernel_run({}, crcs={"test":"b"}))[1] == "cross-boot CRC change"
+    with pytest.raises(ValueError, match="identity"):
+        fleet.cross_boot(base, kernel_run({}), meta, tmp_path/"none.json",
+                         kernel_run({}, identity={"A":"other"}))
+
+
 def test_same_boot_is_not_calibration(tmp_path):
     run = {"requested_sha":{"A":"m","B":"m"},"visual_only":False,"replays":[{}],"scope":"gpubench + captures"}
     (tmp_path/"run").mkdir()

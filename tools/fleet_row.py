@@ -68,7 +68,10 @@ def collect(args):
     meta = dict(board=args.board, arm=args.arm, boot_id=boot, release=platform.release(),
                 kernel_commit=pinned_kernel, build_id=kid, kernel_notes_sha256=hashlib.sha256(notes).hexdigest(),
                 request_sha256=digest(args.request))
-    if args.arm != "restored":
+    # The restored boot measures too when given a bench, so base, candidate and
+    # restored form an A, B, A crossover of the base build.
+    measured = args.arm != "restored" or args.bin is not None
+    if measured:
         if not all((args.bin, args.traces, args.base_env, args.candidate_env or req["kind"] == "kernel")):
             raise ValueError("measurement needs benchmark binaries, corpus and staged environments")
         manifest = read(args.traces)
@@ -95,7 +98,7 @@ def collect(args):
     if boot_file.read_text().strip() != boot:
         raise ValueError("boot changed inside row")
     (args.out/"row.json").write_text(json.dumps(meta, indent=2)+"\n")
-    return 0 if args.arm == "restored" else rc
+    return rc if measured else 0
 
 
 if __name__ == "__main__":

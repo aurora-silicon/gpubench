@@ -96,7 +96,15 @@ def summary(directory, meta, expected, visual):
     return s
 
 
-def cross_boot(a, b, meta, calibration):
+def cross_boot(a, b, meta, calibration, restored=None):
+    """Compare base boot a with candidate boot b.
+
+    With a measured restored boot (the base build booted again after the
+    candidate), the boots form an A, B, A crossover: the candidate is compared
+    with the mean of both base boots, which cancels a steady drift, and the
+    base-to-restored change is the floor. Otherwise a reviewed calibration of
+    the same kernel and Mesa supplies the floor.
+    """
     require(a["executors_sha256"] == b["executors_sha256"], "executor changed between boots")
     if a["verdict"] != "PASS":
         return "FLAG", "baseline inconclusive"
@@ -116,21 +124,34 @@ def cross_boot(a, b, meta, calibration):
         return "FLAG", "cross-boot CRC change"
     if a["visual_only"]:
         return "PASS", "visual only"
-    require(calibration.is_file(), "missing cross-boot calibration")
-    c = read(calibration)
-    require(c["board"] == "apple," + meta["board"] and len(set(c["boot_ids"])) == 2 and
-            c["input_verdicts"] == ["PASS", "PASS"] and re.fullmatch("[0-9a-f]{7,40}", c["mesa"]) and
-            a["requested_sha"]["A"].startswith(c["mesa"]) and
-            c["kernel"] == a["kernel"] and c["kernel_notes_sha256"] == meta["kernel_notes_sha256"] and
-            set(c["cases"]) == CASES, "inapplicable calibration")
-    for case, v in a["perf"].items():
-        w = b["perf"][case]
-        change = median(w["median_us"].values()) / median(v["median_us"].values()) - 1
-        floor = abs(c["cases"][case]["change"])
-        require(math.isfinite(floor) and math.isfinite(change), "nonfinite calibration or measurement")
-        if floor > 0.05 or change > max(0.05, 3*v["noise"], 3*w["noise"]):
+    centre = lambda run, case: median(run["perf"][case]["median_us"].values())
+    if restored is not None:
+        if restored["verdict"] != "PASS":
+            return "FLAG", "restored boot inconclusive"
+        require(restored["identity"] == a["identity"] and
+                restored["executors_sha256"] == a["executors_sha256"], "Mesa identity changed between boots")
+        if restored["crcs"] != a["crcs"]:
+            return "FLAG", "cross-boot CRC change"
+        reference = {case: (centre(a, case) + centre(restored, case)) / 2 for case in a["perf"]}
+        floors = {case: abs(centre(restored, case) / centre(a, case) - 1) for case in a["perf"]}
+        noise = {case: max(run["perf"][case]["noise"] for run in (a, b, restored)) for case in a["perf"]}
+    else:
+        require(calibration.is_file(), "missing cross-boot calibration")
+        c = read(calibration)
+        require(c["board"] == "apple," + meta["board"] and len(set(c["boot_ids"])) == 2 and
+                c["input_verdicts"] == ["PASS", "PASS"] and re.fullmatch("[0-9a-f]{7,40}", c["mesa"]) and
+                a["requested_sha"]["A"].startswith(c["mesa"]) and
+                c["kernel"] == a["kernel"] and c["kernel_notes_sha256"] == meta["kernel_notes_sha256"] and
+                set(c["cases"]) == CASES, "inapplicable calibration")
+        reference = {case: centre(a, case) for case in a["perf"]}
+        floors = {case: abs(c["cases"][case]["change"]) for case in a["perf"]}
+        noise = {case: max(a["perf"][case]["noise"], b["perf"][case]["noise"]) for case in a["perf"]}
+    for case in a["perf"]:
+        change = centre(b, case) / reference[case] - 1
+        require(math.isfinite(floors[case]) and math.isfinite(change), "nonfinite calibration or measurement")
+        if floors[case] > 0.05 or change > max(0.05, 3*noise[case]):
             return "FLAG", f"{case} needs boot crossover"
-    return "PASS", "two-boot comparison"
+    return "PASS", "three-boot crossover" if restored is not None else "two-boot comparison"
 
 
 def board_result(job, req, board):
@@ -155,7 +176,7 @@ def board_result(job, req, board):
         faults[arm] = h["gpu_faults"]
         for key in ("new_kernel_errors","failed_units"):
             require(type(h[key]) is int and h[key] == 0, f"{arm} health: {key}")
-        if arm != "restored":
+        if arm != "restored" or "summary_sha256" in m:
             expect = dict(A=req["base"], B=req["candidate"]) if mesa else dict(A=req["mesa"], B=req["mesa"])
             result[arm] = summary(row, m, expect, board == "j516s")
     if mesa:
@@ -173,12 +194,13 @@ def board_result(job, req, board):
     require(len({m["boot_id"] for m in metadata.values()}) == 3 and
             base["build_id"] == restored["build_id"] != candidate["build_id"], "invalid one-shot/restore sequence")
     require(base["manifest_sha256"] == candidate["manifest_sha256"], "corpus changed across boots")
-    require(base["mesa_libs_sha256"] == candidate["mesa_libs_sha256"], "Mesa library bytes changed")
+    require(base["mesa_libs_sha256"] == candidate["mesa_libs_sha256"] ==
+            restored.get("mesa_libs_sha256", base["mesa_libs_sha256"]), "Mesa library bytes changed")
     if faults["base"] or faults["restored"]:
         return "FLAG", "GPU fault on stock boot"
     if faults["candidate"] and result["base"]["verdict"] == "PASS":
         return "FAIL", "GPU fault on candidate boot"
-    return cross_boot(result["base"], result["candidate"], base, root/"calibration.json")
+    return cross_boot(result["base"], result["candidate"], base, root/"calibration.json", result.get("restored"))
 
 
 def publish(job, req, line):
