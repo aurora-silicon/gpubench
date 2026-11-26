@@ -2,6 +2,7 @@
 from contextlib import nullcontext
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -270,3 +271,182 @@ def test_adapter_timeout_kills_descendant(tmp_path):
     else:
         os.kill(pid, 9)
         pytest.fail("timed-out adapter left its child running")
+
+
+ENGINES = ("drm-driver:\taurora\ndrm-client-id:\t{cid}\ndrm-engine-vertex:\t{v} ns\n"
+           "drm-curfreq-vertex:\t0 Hz\ndrm-engine-fragment:\t{f} ns\ndrm-engine-capacity-fragment:\t2\n")
+
+
+def fake_proc(root, pid, comm, fds):
+    (root / str(pid) / "fd").mkdir(parents=True)
+    (root / str(pid) / "fdinfo").mkdir()
+    (root / str(pid) / "comm").write_bytes(comm if isinstance(comm, bytes) else comm.encode() + b"\n")
+    for fd, (target, info) in enumerate(fds, 3):
+        (root / str(pid) / "fd" / str(fd)).symlink_to(target)
+        if info is not None:
+            (root / str(pid) / "fdinfo" / str(fd)).write_text(info)
+
+
+def test_gpu_clients_snapshot(tmp_path):
+    render = "/dev/dri/renderD128"
+    fake_proc(tmp_path, 101, "Xwayland", [(render, ENGINES.format(cid=17, v=5, f=200)), ("/dev/dri/card0", "flags:\t02\n")])
+    fake_proc(tmp_path, 102, "sleep", [(render, ENGINES.format(cid=17, v=5, f=200))])  # Inherited from 101.
+    fake_proc(tmp_path, 103, "bash", [("/dev/null", "flags:\t02\n")])
+    fake_proc(tmp_path, os.getpid(), "python3", [(render, ENGINES.format(cid=99, v=1, f=1))])
+    (tmp_path / "104").mkdir()  # Exited mid-scan: no fd directory.
+    (tmp_path / "self").mkdir()
+    assert gate.GpuClients.snapshot(tmp_path) == ({"17": dict(comm="Xwayland", pid=101, busy_ns=205)}, [], [])
+
+
+def test_gpu_clients_snapshot_survives_bad_input(tmp_path):
+    render = "/dev/dri/renderD128"
+    # A name cut inside a multi-byte character, and a descriptor that closed during the scan.
+    fake_proc(tmp_path, 201, "aゲームゲームゲ".encode()[:15],
+              [("/tmp/gone", None), (render, None), (render, ENGINES.format(cid=30, v=0, f=1500))])
+    (tmp_path / "201" / "fd" / "9").write_text("")  # Not a link: readlink fails as for a closing descriptor.
+    fake_proc(tmp_path, 202, "odd", [(render, "drm-client-id:\t31\ndrm-engine-fragment:\t2.5e9 ns\n")])
+    fake_proc(tmp_path, 203, "nospace", [(render, "drm-client-id:\t32\ndrm-engine-fragment:\t1000000000ns\n")])
+    clients, errors, _ = gate.GpuClients.snapshot(tmp_path)
+    assert list(clients) == ["30"] and clients["30"]["busy_ns"] == 1500
+    assert [e.split(" client ")[1] for e in errors] == ["31: unreadable drm-engine time", "32: unreadable drm-engine time"]
+
+
+def gate_with_clients(tmp_path, monkeypatch, snapshots, measure=lambda *args: "aabbccdd", tick=2.0,
+                      hidden=None):
+    """Run a visual-only gate in which every check sees the next GPU client table, tick s apart.
+
+    hidden is the pair of tables root sees at the start and the end, or "no sudo".
+    """
+    from types import SimpleNamespace
+    monkeypatch.setattr(gate.KernelJournal, "read",
+                        lambda self, *args: "-- cursor: 0" if "--show-cursor" in args else "")
+    tables = iter(snapshots)
+    last = {}
+    def snapshot(root=None):
+        nonlocal last
+        last = next(tables, last)
+        table = {cid: dict(c) for cid, c in last.items() if cid != "errors"}
+        return table, list(last.get("errors", [])), [1] if hidden else []
+    ticks = (n * tick for n in range(10**6))
+    views = iter(hidden if isinstance(hidden, list) else [])
+    monkeypatch.setattr(gate.GpuClients, "snapshot", staticmethod(snapshot))
+    monkeypatch.setattr(gate.GpuClients, "clock", staticmethod(lambda: next(ticks)))
+    monkeypatch.setattr(gate.GpuClients, "privileged",
+                        lambda self: None if hidden == "no sudo" else next(views, dict(clients={}, errors=[])))
+    monkeypatch.setattr(gate, "info", lambda *args: dict(renderer="G17P", device_name="G17P"))
+    monkeypatch.setattr(gate, "measure", measure)
+    for api in ("gl", "vk"):
+        (tmp_path / f"gpubench-{api}").write_text("")
+    env = tmp_path / "env.json"
+    env.write_text("{}")
+    args = SimpleNamespace(out=tmp_path / "out", base=("a" * 40, env), candidate=("b" * 40, env),
+                           bin=tmp_path, traces=None, visual_only=True)
+    summary = dict(crcs={}, perf={}, replays=[], findings=[], kernel_faults=[])
+    return gate.gate(args, summary), summary
+
+
+def client(comm, pid, ms):
+    return dict(comm=comm, pid=pid, busy_ns=int(ms * 1e6))
+
+
+def desktop(ms, **more):
+    return {"17": client("Xwayland", 2222, ms), **more}
+
+
+def test_idle_desktop_clients_pass(tmp_path, monkeypatch):
+    # The compositor draws 1 ms every check, 0.05 % of the 2 s between checks.
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(ms) for ms in range(20)])
+    assert verdict == "PASS" and summary["findings"] == []
+    assert summary["gpu_clients"]["at_start"] == [dict(client="17", comm="Xwayland", pid=2222, busy_ns=0)]
+
+
+def test_compositor_frame_in_a_short_gap_passes(tmp_path, monkeypatch):
+    # 1 ms of compositor work in a 50 ms gap is 2 % of the gap but 0.1 % of a second.
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(ms) for ms in range(20)], tick=0.05)
+    assert verdict == "PASS" and len(summary["gpu_clients"]["intervals"]) > 0
+
+
+def test_client_exit_alone_passes(tmp_path, monkeypatch):
+    tables = [desktop(0, **{"40": client("plasma-keyboard", 2192, 0)})] * 3 + [desktop(0)]
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, tables)
+    assert verdict == "PASS"
+    assert summary["gpu_clients"]["intervals"][0]["exited"] == ["plasma-keyboard[2192]"]
+
+
+def test_client_missing_from_one_scan_counts_only_new_time(tmp_path, monkeypatch):
+    # An idle compositor with 60 s of earlier GPU time drops out of one scan.
+    old = {"17": client("Xwayland", 2222, 60000)}
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [old, old, {}, old, old])
+    assert verdict == "PASS" and summary["findings"] == []
+
+
+@pytest.mark.parametrize("tables,culprit", [
+    # A benchmark still running when the gate starts uses the GPU, then exits.
+    ([desktop(0, **{"30": client("geekbench_aarch", 4915, 0)}),
+      desktop(0, **{"30": client("geekbench_aarch", 4915, 1500)}), desktop(0)], "geekbench_aarch[4915]"),
+    # A new GPU workload starts between two steps.
+    ([desktop(0)] * 4 + [desktop(0, **{"31": client("deqp-vk", 7000, 100)})], "deqp-vk[7000]"),
+])
+def test_foreign_gpu_time_flags(tmp_path, monkeypatch, tables, culprit):
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, tables)
+    assert verdict == "FLAG"
+    assert [level for level, msg in summary["findings"] if "other GPU clients" in msg] == ["FLAG"]
+    assert culprit in summary["findings"][0][1]
+
+
+def test_unparsable_client_flags(tmp_path, monkeypatch):
+    tables = [desktop(0)] * 3 + [dict(desktop(0), errors=["odd[202] client 31: unreadable drm-engine time"])]
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, tables)
+    assert verdict == "FLAG" and "cannot read the GPU time" in summary["findings"][0][1]
+    assert len(summary["gpu_clients"]["errors"]) == 1
+
+
+@pytest.mark.parametrize("ms,expected", [(1, "PASS"), (2000, "FLAG")])
+def test_unreadable_compositor_is_read_through_sudo(tmp_path, monkeypatch, ms, expected):
+    # kwin_wayland has file capabilities, so only root can read its descriptors.
+    start = dict(clients={"9": client("kwin_wayland", 2114, 500)}, errors=[])
+    end = dict(clients={"9": client("kwin_wayland", 2114, 500 + ms), "17": client("Xwayland", 2222, 0)}, errors=[])
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, end])
+    assert verdict == expected
+    unreadable = summary["gpu_clients"]["unreadable"]
+    assert unreadable["at_start"] == [dict(client="9", **client("kwin_wayland", 2114, 500))]
+    assert unreadable["used_ms"] == {"kwin_wayland[2114]": ms}
+
+
+@pytest.mark.parametrize("hidden", [False, True])
+def test_clients_of_one_process_add_up(tmp_path, monkeypatch, hidden):
+    # Each of four compositor clients stays under the limit; together they do not.
+    def clients(ms):
+        return {str(cid): client("kwin_wayland", 2114, ms) for cid in range(9, 13)}
+    if hidden:
+        views = [dict(clients=clients(0), errors=[]), dict(clients=clients(80), errors=[])]
+        verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=views)
+        assert summary["gpu_clients"]["unreadable"]["used_ms"] == {"kwin_wayland[2114]": 320}
+    else:
+        verdict, summary = gate_with_clients(tmp_path, monkeypatch, [clients(0), clients(8)])
+    assert verdict == "FLAG"
+
+
+def test_without_sudo_the_run_is_inconclusive(tmp_path, monkeypatch):
+    # Covers both a missing sudo and helper output that does not parse: privileged() returns None.
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden="no sudo")
+    assert verdict == "FLAG" and "noninteractive sudo" in summary["findings"][0][1]
+    assert summary["gpu_clients"]["unreadable"].startswith("not read")
+
+
+def test_unreadable_client_exiting_mid_run_flags(tmp_path, monkeypatch):
+    start = dict(clients={"9": client("kwin_wayland", 2114, 500)}, errors=[])
+    end = dict(clients={}, errors=[])
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, end])
+    assert verdict == "FLAG"
+    assert summary["gpu_clients"]["unreadable"]["exited"] == ["kwin_wayland[2114] client 9"]
+
+
+def test_foreign_gpu_time_keeps_a_candidate_failure(tmp_path, monkeypatch):
+    def measure(row, arm, *args):
+        if arm == "B":
+            raise gate.Regression("B gl/render.postfx/verify: no valid JSON (exit -11)")
+        return "aabbccdd"
+    busy = desktop(0, **{"30": client("geekbench_aarch", 4915, 1500)})
+    with pytest.raises(gate.Regression):
+        gate_with_clients(tmp_path, monkeypatch, [desktop(0)] * 5 + [busy], measure)
