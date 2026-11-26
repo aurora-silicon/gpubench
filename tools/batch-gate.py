@@ -25,6 +25,7 @@ ROWS = [
     ("vk", "render.bindless_ubo", 1, ["mode=ubo_vec4", "draws=512"]),
 ]
 ORDERS = ["ABBA", "BAAB"] * 2
+LEVELS = ["PASS", "FLAG", "FAIL"]
 
 
 class Flag(Exception):
@@ -118,6 +119,200 @@ class KernelJournal:
             yield
         finally:
             self.drain()
+
+
+ENGINE_KEY = re.compile(r"drm-engine-(?!capacity-)[a-z0-9_-]+")
+ENGINE_TIME = re.compile(r"\s*(\d+) ns\s*")
+
+
+class GpuClients:
+    """GPU time used by other DRM clients, read from /proc fdinfo between steps.
+
+    One client is one open of a DRM device (drm-client-id). Every process that
+    inherited the descriptor shows the same client, so it is counted once. The
+    drm-engine-<name> keys hold the client's accumulated time on each engine.
+    The gate reads the processes of its own user before each step. Processes it
+    cannot read, such as another user's or a compositor with file capabilities,
+    are read through noninteractive sudo at the start and the end only. A
+    driver without engine keys shows no time, so the check cannot flag there.
+    """
+
+    # One percent of the GPU can move a timing case by about 1 %, a fifth of
+    # the 5 % floor.
+    LIMIT = 0.01
+    clock = staticmethod(time.monotonic)
+
+    def __init__(self, summary):
+        self.findings, self.flagged, self.scan_s, self.checks = summary["findings"], set(), 0.0, 0
+        self.record = summary["gpu_clients"] = dict(intervals=[], errors=[])
+        self.known, self.since = self.scan(), self.clock()
+        self.seen = {cid: c["busy_ns"] for cid, c in self.known.items()}
+        self.record["at_start"] = [dict(client=cid, **c) for cid, c in sorted(self.known.items())]
+        self.start, self.hidden_start = self.since, self.privileged()
+        hidden = (self.hidden_start or {}).get("clients", {}).values()
+        # The helper reads each start time with its client; read here only what it left out.
+        started = {pid: self.process_start(pid) for pid in {c["pid"] for c in hidden if "started" not in c}}
+        for c in hidden:
+            c.setdefault("started", started.get(c["pid"]))
+
+    @staticmethod
+    def snapshot(root=Path("/proc")):
+        """Return ({client id: comm, pid, busy_ns}, [errors], unreadable PIDs)."""
+        own = os.getpid()
+        clients, errors, hidden = {}, [], []
+        # In PID order, so a shared client is named after its lowest process: usually the opener.
+        for proc in sorted((p for p in root.iterdir() if p.name.isdigit()), key=lambda p: int(p.name)):
+            pid = int(proc.name)
+            if pid == own:
+                continue
+            try:
+                fds = sorted(proc.joinpath("fd").iterdir(), key=lambda fd: fd.name)
+            except PermissionError:
+                hidden.append(pid)
+                continue
+            except OSError:  # Exited.
+                continue
+            for fd in fds:
+                try:  # A descriptor can close while it is being read.
+                    if not os.readlink(fd).startswith("/dev/dri/"):
+                        continue
+                    text = proc.joinpath("fdinfo", fd.name).read_bytes().decode(errors="replace")
+                except OSError:
+                    continue
+                keys = dict(line.split(":", 1) for line in text.splitlines() if ":" in line)
+                cid = keys.get("drm-client-id", "").strip()
+                if not cid or cid in clients:
+                    continue
+                try:
+                    comm = proc.joinpath("comm").read_bytes().decode(errors="replace").strip()
+                except OSError:
+                    comm = "?"
+                times = [ENGINE_TIME.fullmatch(value) for key, value in keys.items() if ENGINE_KEY.fullmatch(key)]
+                if not all(times):
+                    errors.append(f"{comm}[{pid}] client {cid}: unreadable drm-engine time")
+                    continue
+                clients[cid] = dict(comm=comm, pid=pid, busy_ns=sum(int(t[1]) for t in times))
+        return clients, errors, hidden
+
+    def scan(self):
+        started = time.monotonic()
+        clients, errors, self.hidden = self.snapshot()
+        self.checks += 1
+        self.scan_s += time.monotonic() - started
+        self.record.update(checks=self.checks, scan_s=round(self.scan_s, 3), unreadable_processes=len(self.hidden))
+        for error in errors:
+            self.flag("unreadable", f"cannot read the GPU time of another DRM client ({error})")
+        return clients
+
+    def privileged(self):
+        """All DRM clients as root sees them, or None without noninteractive sudo."""
+        if not self.hidden or os.geteuid() == 0:
+            return dict(clients={}, errors=[])
+        try:
+            out = subprocess.run(["sudo", "-n", sys.executable, "-I", str(Path(__file__).resolve()), "--gpu-clients"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=20, check=True)
+            return json.loads(out.stdout)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+
+    @staticmethod
+    def process_start(pid, root=Path("/proc")):
+        """Start time of a running process in clock ticks since boot, or None.
+
+        /proc/<pid>/stat is readable by every user. The start time tells a
+        running process apart from a later one that reused its PID. An exited
+        process that is not yet reaped keeps its entry and start time, so its
+        state (Z or X) counts as ended.
+        """
+        try:
+            stat = root.joinpath(str(pid), "stat").read_bytes()
+            fields = stat.rpartition(b")")[2].split()  # The name may hold any bytes.
+            return None if fields[0] in (b"Z", b"X") else int(fields[19])  # Fields 3 and 22.
+        except (OSError, IndexError, ValueError):
+            return None
+
+    def flag(self, kind, message):
+        if kind == "unreadable" and message not in self.record["errors"]:
+            self.record["errors"].append(message)
+        if kind not in self.flagged:  # Later occurrences stay in the record.
+            self.flagged.add(kind)
+            self.findings.append(("FLAG", message))
+
+    @staticmethod
+    def charge(now, seen):
+        """Return {process: ns} used since last seen, and update the counters."""
+        used = {}
+        for cid, c in now.items():
+            ns = c["busy_ns"] - seen.get(cid, 0)  # A client never seen counts all of its time.
+            seen[cid] = c["busy_ns"]
+            if ns > 0:  # One process can hold several clients.
+                name = f"{c['comm']}[{c['pid']}]"
+                used[name] = used.get(name, 0) + ns
+        return used
+
+    def check(self, arm, step):
+        now = self.scan()
+        at = self.clock()
+        wall = at - self.since
+        used = self.charge(now, self.seen)
+        started = [f"{now[cid]['comm']}[{now[cid]['pid']}]" for cid in sorted(set(now) - set(self.known))]
+        exited = [f"{self.known[cid]['comm']}[{self.known[cid]['pid']}]" for cid in sorted(set(self.known) - set(now))]
+        if used or started or exited:
+            self.record["intervals"].append(dict(
+                arm=arm, step=step, wall_s=round(wall, 3), used_ms={k: round(ns / 1e6, 3) for k, ns in used.items()},
+                started=started, exited=exited))
+            total = sum(used.values()) / 1e9
+            # A gap shorter than a second is judged against one second, so a
+            # compositor frame in a short gap between steps cannot flag.
+            if total > self.LIMIT * max(wall, 1.0):
+                self.flag("used", f"other GPU clients used {total * 1e3:.1f} ms of GPU time in {wall:.1f} s "
+                                  f"by the end of {arm} {step} ({', '.join(used)})")
+        self.known, self.since = now, at
+
+    def finish(self, arm, step):
+        self.check(arm, step)
+        end = self.privileged() if self.hidden_start is not None else None
+        if self.hidden_start is None or end is None:
+            # As with an unreadable journal, a check that could not run makes the result inconclusive.
+            self.record["unreadable"] = "not read: noninteractive sudo unavailable or its output unreadable"
+            self.flag("unreadable", "cannot read the GPU clients of processes this user cannot inspect "
+                                    "(noninteractive sudo unavailable or its output unreadable)")
+            return
+        # Every client the gate's own scans saw is already charged per step.
+        wall = self.clock() - self.start
+        before = {cid: c for cid, c in self.hidden_start["clients"].items() if cid not in self.seen}
+        after = {cid: c for cid, c in end["clients"].items() if cid not in self.seen}
+        used = self.charge(after, {cid: c["busy_ns"] for cid, c in before.items()})
+        # A closed client whose process still runs is recorded only. If the
+        # process ended, its use after the first read is unknown, as for a
+        # benchmark that outlived its lock.
+        closed, gone = [], []
+        missing = {cid: c for cid, c in sorted(before.items()) if cid not in after}
+        now = {pid: self.process_start(pid) for pid in {c["pid"] for c in missing.values()}}
+        for cid, c in missing.items():
+            running = c["started"] is not None and now[c["pid"]] == c["started"]
+            (closed if running else gone).append(f"{c['comm']}[{c['pid']}] client {cid}")
+        self.record["unreadable"] = dict(at_start=[dict(client=cid, **c) for cid, c in sorted(before.items())],
+                                         used_ms={k: round(ns / 1e6, 3) for k, ns in used.items()},
+                                         closed=closed, exited=gone)
+        if gone:
+            self.flag("unreadable", f"a process holding a GPU client the gate cannot read directly ended during the run "
+                                    f"({', '.join(gone)})")
+        for error in self.hidden_start["errors"] + end["errors"]:
+            self.flag("unreadable", f"cannot read the GPU time of another DRM client ({error})")
+        total = sum(used.values()) / 1e9
+        if total > self.LIMIT * max(wall, 1.0):
+            self.flag("used", f"GPU clients the gate cannot read directly used {total * 1e3:.1f} ms of GPU time "
+                              f"in the {wall:.1f} s run ({', '.join(used)})")
+
+
+def gpu_clients_main():
+    """Read-only helper run through sudo: print every DRM client as JSON."""
+    clients, errors, _ = GpuClients.snapshot()
+    for c in clients.values():
+        c["started"] = GpuClients.process_start(c["pid"])
+    print(json.dumps(dict(clients=clients, errors=errors)))
+    return 0
 
 
 def digest(path):
@@ -330,24 +525,34 @@ def gate(args, summary):
     bins = {api: args.bin.resolve() / f"gpubench-{api}" for api in ("gl", "vk")}
     summary["executors_sha256"] = {api: digest(exe) for api, exe in bins.items()}
     journal = KernelJournal(summary["kernel_faults"])
+    clients = GpuClients(summary)
+
+    @contextmanager
+    def observe(arm, step):
+        # Between steps only other workloads can hold the GPU open.
+        clients.check(journal.last_arm, journal.last_step)
+        with journal.observe(arm, step):
+            yield
 
     try:
-        return compare(args, summary, out, envs, bins, journal)
+        verdict = compare(args, summary, out, envs, bins, observe)
     finally:
         journal.drain()  # Include teardown after the last arm and before the verdict.
+        clients.finish(journal.last_arm, journal.last_step)
+    return max([verdict, *(status for status, _ in summary["findings"])], key=LEVELS.index)
 
 
-def compare(args, summary, out, envs, bins, journal):
+def compare(args, summary, out, envs, bins, observe):
     def run(row, arm, stage):
         api, name, _, _ = row
-        with journal.observe(arm, f"{api}/{name}/{stage}"):
+        with observe(arm, f"{api}/{name}/{stage}"):
             return measure(row, arm, bins[api], envs[arm], out, stage)
 
     identities = summary["identity"] = {}
     for arm, (sha, _) in (("A", args.base), ("B", args.candidate)):
         identities[arm] = {}
         for api, exe in bins.items():
-            with journal.observe(arm, f"{api}/info"):
+            with observe(arm, f"{api}/info"):
                 identities[arm][api] = info(exe, api, envs[arm], sha, out / "executors.log", arm)
     for api, field in (("gl", "renderer"), ("vk", "device_name")):
         if identities["A"][api][field] != identities["B"][api][field]:
@@ -361,7 +566,7 @@ def compare(args, summary, out, envs, bins, journal):
         if crc["A"] != crc["B"]:
             findings.append(("FLAG", f"{api}/{name}: CRC changed within oracle tolerance"))
     if args.traces:
-        replay(args.traces, device, envs, out, summary["replays"], journal.observe)
+        replay(args.traces, device, envs, out, summary["replays"], observe)
     if not args.visual_only:
         for row in ROWS:
             api, name, _, _ = row
@@ -375,7 +580,7 @@ def compare(args, summary, out, envs, bins, journal):
             summary["perf"][f"{api}/{name}"] = stats
             if stats["verdict"] != "PASS":
                 findings.append((stats["verdict"], f"{api}/{name}: timing"))
-    return max((status for status, _ in findings), key=["PASS", "FLAG", "FAIL"].index, default="PASS")
+    return max((status for status, _ in findings), key=LEVELS.index, default="PASS")
 
 
 def main():
@@ -416,6 +621,8 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--gpu-clients"]:
+        sys.exit(gpu_clients_main())
     try:
         sys.exit(main())
     except OSError as exc:
