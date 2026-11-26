@@ -454,12 +454,42 @@ def test_unreadable_client_gone_at_end(tmp_path, monkeypatch, starts, verdict, f
     assert summary["gpu_clients"]["unreadable"][field] == ["geekbench_aarch[2114] client 9"]
 
 
-def test_process_start_reads_field_22(tmp_path):
-    (tmp_path / "7").mkdir()
-    # A name with spaces and a parenthesis must not shift the fields.
-    (tmp_path / "7" / "stat").write_text("7 (odd) name) S 1 7 7 0 -1 4194560 " + " ".join(["0"] * 12) + " 424242 0\n")
+def write_stat(root, pid, name, state, start):
+    (root / str(pid)).mkdir(exist_ok=True)
+    (root / str(pid) / "stat").write_bytes(b"%d (%s) %s 1 7 7 0 -1 4194560 " % (pid, name, state) +
+                                           b" ".join([b"0"] * 12) + b" %d 0\n" % start)
+
+
+@pytest.mark.parametrize("name", [b"odd) name", "aゲームゲームゲ".encode()[:15]])
+def test_process_start_reads_field_22(tmp_path, name):
+    # A name with spaces, a parenthesis or broken UTF-8 must not shift the fields.
+    write_stat(tmp_path, 7, name, b"S", 424242)
     assert gate.GpuClients.process_start(7, tmp_path) == 424242
     assert gate.GpuClients.process_start(8, tmp_path) is None
+
+
+@pytest.mark.parametrize("state", [b"Z", b"X"])
+def test_unreaped_process_counts_as_ended(tmp_path, monkeypatch, state):
+    # An exited, unreaped GB6 keeps /proc/<pid>/stat and its start time.
+    write_stat(tmp_path, 4915, b"geekbench_aarch", b"R", 1000)
+    real = gate.GpuClients.process_start
+    started = real(4915, tmp_path)
+    write_stat(tmp_path, 4915, b"geekbench_aarch", state, 1000)
+    assert real(4915, tmp_path) is None
+    start = dict(clients={"30": client("geekbench_aarch", 4915, 500)}, errors=[])
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, dict(clients={}, errors=[])],
+                                         starts=(started, real(4915, tmp_path)))
+    assert verdict == "FLAG"
+    assert summary["gpu_clients"]["unreadable"]["exited"] == ["geekbench_aarch[4915] client 30"]
+
+
+def test_helper_start_time_is_kept(tmp_path, monkeypatch):
+    # The sudo helper reads the start time with the client; the gate does not read it again.
+    start = dict(clients={"9": dict(client("kwin_wayland", 2114, 0), started=1000)}, errors=[])
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, dict(clients={}, errors=[])],
+                                         starts=(1000,))
+    assert verdict == "PASS"
+    assert summary["gpu_clients"]["unreadable"]["closed"] == ["kwin_wayland[2114] client 9"]
 
 
 def test_foreign_gpu_time_keeps_a_candidate_failure(tmp_path, monkeypatch):

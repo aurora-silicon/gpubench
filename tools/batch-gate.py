@@ -150,9 +150,10 @@ class GpuClients:
         self.record["at_start"] = [dict(client=cid, **c) for cid, c in sorted(self.known.items())]
         self.start, self.hidden_start = self.since, self.privileged()
         hidden = (self.hidden_start or {}).get("clients", {}).values()
-        started = {pid: self.process_start(pid) for pid in {c["pid"] for c in hidden}}
+        # The helper reads each start time with its client; read here only what it left out.
+        started = {pid: self.process_start(pid) for pid in {c["pid"] for c in hidden if "started" not in c}}
         for c in hidden:
-            c["started"] = started[c["pid"]]
+            c.setdefault("started", started.get(c["pid"]))
 
     @staticmethod
     def snapshot(root=Path("/proc")):
@@ -216,14 +217,17 @@ class GpuClients:
 
     @staticmethod
     def process_start(pid, root=Path("/proc")):
-        """Start time of a process in clock ticks since boot, or None once it has exited.
+        """Start time of a running process in clock ticks since boot, or None.
 
         /proc/<pid>/stat is readable by every user. The start time tells a
-        running process apart from a later one that reused its PID.
+        running process apart from a later one that reused its PID. An exited
+        process that is not yet reaped keeps its entry and start time, so its
+        state (Z or X) counts as ended.
         """
         try:
-            fields = root.joinpath(str(pid), "stat").read_text().rpartition(")")[2].split()
-            return int(fields[19])  # Field 22; the split starts at field 3.
+            stat = root.joinpath(str(pid), "stat").read_bytes()
+            fields = stat.rpartition(b")")[2].split()  # The name may hold any bytes.
+            return None if fields[0] in (b"Z", b"X") else int(fields[19])  # Fields 3 and 22.
         except (OSError, IndexError, ValueError):
             return None
 
@@ -305,6 +309,8 @@ class GpuClients:
 def gpu_clients_main():
     """Read-only helper run through sudo: print every DRM client as JSON."""
     clients, errors, _ = GpuClients.snapshot()
+    for c in clients.values():
+        c["started"] = GpuClients.process_start(c["pid"])
     print(json.dumps(dict(clients=clients, errors=errors)))
     return 0
 
