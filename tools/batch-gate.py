@@ -282,4 +282,9 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except OSError as exc:
+        # Includes creation of the evidence directory and the final summary write.
+        print(f"FLAG: cannot store gate evidence: {exc}", file=sys.stderr)
+        sys.exit(2)

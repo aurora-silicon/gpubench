@@ -101,3 +101,11 @@ def test_local_image_change(arm, roi, outcome, tmp_path, monkeypatch):
         rows = []
         gate.replay(manifest, "gpu", arms, tmp_path, rows)
         assert len(rows) == 2
+
+
+def test_reused_evidence_directory_is_inconclusive(tmp_path):
+    result = subprocess.run([gate.__file__, "--out", tmp_path, "--bin", tmp_path,
+                             "--base", "1234567", "a.json", "--candidate", "7654321", "b.json"],
+                            text=True, capture_output=True)
+    assert result.returncode == 2 and "FLAG" in result.stderr
+    assert list(tmp_path.iterdir()) == []
