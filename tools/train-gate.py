@@ -97,19 +97,21 @@ def summary(directory, meta, expected, visual):
 
 
 def cross_boot(a, b, meta, calibration):
-    require(a["executors_sha256"] == b["executors_sha256"] and a["identity"] == b["identity"],
-            "Mesa or executor changed between boots")
+    require(a["executors_sha256"] == b["executors_sha256"], "executor changed between boots")
     if a["verdict"] != "PASS":
         return "FLAG", "baseline inconclusive"
     if b["verdict"] != "PASS":
-        # Both runner arms use the candidate kernel. A base-side oracle failure here
-        # is a kernel difference after the actual base boot passed its own checks.
-        mismatch = any(re.search(r"^A .+(?:no valid JSON \(exit |replayer exited |missing or ambiguous screenshot|\(exit -?[1-9][0-9]*\)$)", msg)
-                       or re.fullmatch(r"A (gl|vk) [\w.]+: output oracle failed", msg)
-                       or re.fullmatch(r"A .+ frame/call [0-9]+ differs from golden", msg)
-                       or re.fullmatch(r"[AB] .+: new GPU fault in kernel log", msg)
-                       for level, msg in b["findings"])
-        return ("FAIL", "candidate output mismatch") if mismatch else ("FLAG", "candidate inconclusive")
+        # On this boot BOTH runner arms use the candidate kernel. Timing-only
+        # findings are A/A noise. The stock boot already passed the same oracles.
+        failures = [msg for _, msg in b["findings"] if re.match(r"^[AB] ", msg)]
+        patterns = ("no valid JSON", "replayer exited", "missing or ambiguous screenshot",
+                    "output oracle failed", "differs from golden", "new GPU fault in kernel log")
+        if any(any(p in msg for p in patterns) or
+               re.search(r"(?:--info exited -?[1-9][0-9]*|\(exit -?[1-9][0-9]*\))$", msg)
+               for msg in failures):
+            return "FAIL", "candidate workload or GPU fault"
+        return "FLAG", "candidate inconclusive"
+    require(a["identity"] == b["identity"], "Mesa identity changed between boots")
     if a["crcs"] != b["crcs"]:
         return "FLAG", "cross-boot CRC change"
     if a["visual_only"]:
@@ -117,7 +119,8 @@ def cross_boot(a, b, meta, calibration):
     require(calibration.is_file(), "missing cross-boot calibration")
     c = read(calibration)
     require(c["board"] == "apple," + meta["board"] and len(set(c["boot_ids"])) == 2 and
-            c["input_verdicts"] == ["PASS", "PASS"] and c["mesa"] == a["requested_sha"]["A"] and
+            c["input_verdicts"] == ["PASS", "PASS"] and re.fullmatch("[0-9a-f]{7,40}", c["mesa"]) and
+            a["requested_sha"]["A"].startswith(c["mesa"]) and
             c["kernel"] == a["kernel"] and c["kernel_notes_sha256"] == meta["kernel_notes_sha256"] and
             set(c["cases"]) == CASES, "inapplicable calibration")
     for case, v in a["perf"].items():
@@ -186,15 +189,15 @@ def publish(job, req, line):
         return json.loads(raw)
     last = req["members"][-1]["number"]
     # Re-check batch membership at publication time, including a rebase of the live tip.
-    ref = gh(f"repos/{repo}/git/ref/heads/{branch}")
-    require(ref["object"]["sha"] == req["base"], "live branch moved; summary retained locally")
-    for member in req["members"]:
-        pr = gh(f"repos/{repo}/pulls/{member['number']}")
-        require(pr["state"] == "open" and pr["head"]["sha"] == member["head"] and
-                pr["base"]["ref"] == branch, "PR moved; summary retained locally")
     marker = "<!-- gpubench-fleet-gate -->"
     with (job.parent/f".{req['kind']}-{last}.lock").open("a") as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
+        ref = gh(f"repos/{repo}/git/ref/heads/{branch}")
+        require(ref["object"]["sha"] == req["base"], "live branch moved; summary retained locally")
+        for member in req["members"]:
+            pr = gh(f"repos/{repo}/pulls/{member['number']}")
+            require(pr["state"] == "open" and pr["head"]["sha"] == member["head"] and
+                    pr["base"]["ref"] == branch, "PR moved; summary retained locally")
         login = gh("user")["login"]
         endpoint = f"repos/{repo}/issues/{last}/comments"
         pages = gh(endpoint, "--paginate", "--slurp")
