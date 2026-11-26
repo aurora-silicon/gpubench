@@ -210,13 +210,24 @@ def measure(row, arm, exe, env, out, stage):
     return value
 
 
+def third_difference(order, block):
+    """Process-to-process noise left in one block, relative to its median.
+
+    The weights -1, 3, -3, 1 over the four processes in run order sum to zero
+    for each arm and cancel any linear or quadratic trend, so neither the arm
+    difference nor a drift both arms share (such as the GPU warming up) enters
+    it. With independent noise sigma per process it has variance 20 sigma^2.
+    """
+    arms = {arm: iter(block[arm]) for arm in "AB"}
+    x = [next(arms[arm]) for arm in order]
+    return abs(-x[0] + 3 * x[1] - 3 * x[2] + x[3]) / (math.sqrt(20) * median(x))
+
+
 def classify(blocks):
     samples = {arm: [x for b in blocks for x in b[arm]] for arm in "AB"}
-    # Robust within-arm dispersion, expressed as a fraction of its median.
-    def spread(values):
-        center = median(values)
-        return 1.4826 * median(abs(v / center - 1) for v in values)
-    noise = max(spread(values) for values in samples.values())
+    # Mean absolute deviation of a normal variable is sigma * sqrt(2 / pi).
+    residuals = [third_difference(order, b) for order, b in zip(ORDERS, blocks, strict=True)]
+    noise = sum(residuals) / len(residuals) / math.sqrt(2 / math.pi)
     changes = [median(b["B"]) / median(b["A"]) - 1 for b in blocks]
     limit = max(0.05, 3 * noise)
     if min(changes) > limit:

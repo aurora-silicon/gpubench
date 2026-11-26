@@ -24,6 +24,51 @@ def test_confirm_across_orders(times, expected):
     assert gate.classify(blocks)["verdict"] == expected
 
 
+# GL postfx submission times in run order from a J700 A/B of two Mesa builds
+# with no performance difference. Both arms slow by about 30% as the run goes on.
+J700_GL_DRIFT = [480.8, 501.1, 505.6, 504.5, 528.2, 541.5, 554.9, 582.9,
+                 599.2, 605.7, 616.4, 620.7, 629.4, 634.7, 633.8, 638.3]
+
+
+def blocks_in_order(times, slowdown=1.0):
+    blocks, values = [], iter(times)
+    for order in gate.ORDERS:
+        block = {"A": [], "B": []}
+        for arm in order:
+            block[arm].append(next(values) * (slowdown if arm == "B" else 1))
+        blocks.append(block)
+    return blocks
+
+
+@pytest.mark.parametrize(("times", "slowdown", "expected"), [
+    (J700_GL_DRIFT, 1.0, "PASS"),
+    (J700_GL_DRIFT, 1.10, "FAIL"),
+    (J700_GL_DRIFT, 1.03, "PASS"),
+    ([100 + 3 * i for i in range(16)], 1.0, "PASS"),
+    ([100 + 3 * i for i in range(16)], 1.08, "FAIL"),
+])
+def test_shared_drift_is_not_noise(times, slowdown, expected):
+    stats = gate.classify(blocks_in_order(times, slowdown))
+    assert stats["verdict"] == expected
+    assert stats["noise"] < 0.01
+
+
+@pytest.mark.parametrize("slow", [{1}, {2, 9}, {0, 6, 12}])
+def test_isolated_slow_processes_are_noise(slow):
+    times = [130 if i in slow else 100 for i in range(16)]
+    stats = gate.classify(blocks_in_order(times))
+    assert stats["verdict"] == "FLAG"
+    assert stats["noise"] > 0.05
+
+
+def test_third_difference_follows_run_order():
+    # ABBA runs A, B, B, A; BAAB runs B, A, A, B.
+    assert gate.third_difference("ABBA", {"A": [1, 1], "B": [4, 9]}) == pytest.approx(
+        abs(-1 + 12 - 27 + 1) / (20 ** 0.5 * 2.5))
+    assert gate.third_difference("BAAB", {"A": [4, 9], "B": [1, 1]}) == pytest.approx(
+        abs(-1 + 12 - 27 + 1) / (20 ** 0.5 * 2.5))
+
+
 @pytest.mark.parametrize(("arm", "valid", "status", "issue"), [
     ("A", False, "fail", gate.Flag),
     ("B", False, "fail", gate.Regression),
