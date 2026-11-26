@@ -427,10 +427,19 @@ def test_clients_of_one_process_add_up(tmp_path, monkeypatch, hidden):
     assert verdict == "FLAG"
 
 
-def test_without_sudo_the_gap_is_recorded(tmp_path, monkeypatch):
+def test_without_sudo_the_run_is_inconclusive(tmp_path, monkeypatch):
+    # Covers both a missing sudo and helper output that does not parse: privileged() returns None.
     verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden="no sudo")
-    assert verdict == "PASS"
-    assert summary["gpu_clients"]["unreadable"] == "not read: noninteractive sudo unavailable"
+    assert verdict == "FLAG" and "noninteractive sudo" in summary["findings"][0][1]
+    assert summary["gpu_clients"]["unreadable"].startswith("not read")
+
+
+def test_unreadable_client_exiting_mid_run_flags(tmp_path, monkeypatch):
+    start = dict(clients={"9": client("kwin_wayland", 2114, 500)}, errors=[])
+    end = dict(clients={}, errors=[])
+    verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, end])
+    assert verdict == "FLAG"
+    assert summary["gpu_clients"]["unreadable"]["exited"] == ["kwin_wayland[2114] client 9"]
 
 
 def test_foreign_gpu_time_keeps_a_candidate_failure(tmp_path, monkeypatch):

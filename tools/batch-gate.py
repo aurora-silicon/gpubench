@@ -252,15 +252,22 @@ class GpuClients:
         self.check(arm, step)
         end = self.privileged() if self.hidden_start is not None else None
         if self.hidden_start is None or end is None:
-            self.record["unreadable"] = "not read: noninteractive sudo unavailable"
+            # As with an unreadable journal, a check that could not run makes the result inconclusive.
+            self.record["unreadable"] = "not read: noninteractive sudo unavailable or its output unreadable"
+            self.flag("unreadable", "cannot read the GPU clients of processes this user cannot inspect "
+                                    "(noninteractive sudo unavailable or its output unreadable)")
             return
         # Every client the gate's own scans saw is already charged per step.
         wall = self.clock() - self.start
         before = {cid: c for cid, c in self.hidden_start["clients"].items() if cid not in self.seen}
         after = {cid: c for cid, c in end["clients"].items() if cid not in self.seen}
         used = self.charge(after, {cid: c["busy_ns"] for cid, c in before.items()})
+        gone = [f"{c['comm']}[{c['pid']}] client {cid}" for cid, c in sorted(before.items()) if cid not in after]
         self.record["unreadable"] = dict(at_start=[dict(client=cid, **c) for cid, c in sorted(before.items())],
-                                         used_ms={k: round(ns / 1e6, 3) for k, ns in used.items()})
+                                         used_ms={k: round(ns / 1e6, 3) for k, ns in used.items()}, exited=gone)
+        if gone:  # Its use after the first read is unknown.
+            self.flag("unreadable", f"a GPU client the gate cannot read directly exited during the run "
+                                    f"({', '.join(gone)})")
         for error in self.hidden_start["errors"] + end["errors"]:
             self.flag("unreadable", f"cannot read the GPU time of another DRM client ({error})")
         total = sum(used.values()) / 1e9
