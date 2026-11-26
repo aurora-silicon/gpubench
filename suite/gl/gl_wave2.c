@@ -576,6 +576,10 @@ gl2_postfx_rec(void *u, uint64_t k)
       glBindFramebuffer(GL_DRAW_FRAMEBUFFER, st->hdr_fbo);
       glBlitFramebuffer(0, 0, (GLint)st->w, (GLint)st->h, 0, 0, (GLint)st->w, (GLint)st->h,
                         GL_COLOR_BUFFER_BIT, GL_NEAREST);
+      /* Discard the multisample colour and depth after the resolve, as the
+       * Vulkan and Metal executors do with DONT_CARE store operations. */
+      static const GLenum ms_att[2] = {GL_COLOR_ATTACHMENT0, GL_DEPTH_ATTACHMENT};
+      glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 2, ms_att);
    }
 
    glUseProgram(st->down_p);

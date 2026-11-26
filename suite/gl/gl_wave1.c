@@ -221,6 +221,11 @@ gl_cmp_rec(void *u, uint64_t k)
          glBindFramebuffer(GL_READ_FRAMEBUFFER, s->fbo_w);
          glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s->fbo_res);
          glBlitFramebuffer(0, 0, (GLint)s->w, (GLint)s->h, 0, 0, (GLint)s->w, (GLint)s->h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+         /* The Vulkan and Metal executors discard the samples after the
+          * resolve (DONT_CARE / MultisampleResolve). Without this, GL has to
+          * store all four samples for a later pass that never reads them. */
+         static const GLenum ms_att = GL_COLOR_ATTACHMENT0;
+         glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 1, &ms_att);
       }
    }
    glBindFramebuffer(GL_FRAMEBUFFER, s->fbo_r);

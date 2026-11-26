@@ -86,6 +86,10 @@ render-pass boundaries, or identical scheduling. The fill workload is already
 blended, so use `opaque` versus `fill` to examine blend cost. The `opaque` rate counts requested layers; hidden-surface removal may eliminate
 covered fragments. `texture` retains blending so all layers contribute. The minimal
 texture test measures one cached lookup, not a texture bandwidth sweep.
+The multisample workloads (`compress.bw kind=msaa4`, `render.postfx msaa=4`)
+invalidate the multisample attachments after `glBlitFramebuffer` resolves
+them, matching the Vulkan `DONT_CARE` and Metal `MultisampleResolve` store
+actions; otherwise GL must keep every sample in memory.
 
 ## Paired native-versus-Zink commands
 
