@@ -37,11 +37,14 @@ def diagnose(commits, run):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--adapter-timeout", type=int, default=900, metavar="SECONDS")
     p.add_argument("repo", help="repository containing the train commits")
     p.add_argument("base")
     p.add_argument("tip")
     p.add_argument("command", nargs="+", help="row adapter, called with BASE_SHA PREFIX_SHA appended")
     args = p.parse_args()
+    if args.adapter_timeout < 1:
+        p.error("adapter timeout must be positive")
 
     def git(*cmd):
         return subprocess.check_output(["git", "-C", args.repo, *cmd], text=True).strip()
@@ -52,7 +55,7 @@ def main():
         if not prefixes or git("rev-parse", prefixes[0] + "^1") != base:
             p.error("base must precede tip on the same first-parent train")
         def run(a, b):
-            return subprocess.run([*args.command, a, b]).returncode
+            return subprocess.run([*args.command, a, b], timeout=args.adapter_timeout).returncode
         rc, msg = diagnose([base, *prefixes], run)
     except (OSError, subprocess.SubprocessError) as exc:
         rc, msg = 2, f"FLAG: {exc}"

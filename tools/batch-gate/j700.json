@@ -13,6 +13,10 @@
           "file": "goldens/j700/triangle.png",
           "sha256": "862b27a66304d172a6ca2a77ea75c611212a480ae842f74553336b59dc607abd"
         }
+      },
+      "replayer": {
+        "sha256": "1a3f9cbf7a4aa481af32a2ea9abd080f3babe6906f3d929bb6c9d05a6ee7e5af",
+        "version": "gfxrecon-replay version info: GFXReconstruct Version 0.9.18-unknown (unknown-build-source) Vulkan Header Version 1.3.239"
       }
     },
     {
@@ -23,6 +27,10 @@
           "file": "goldens/j700/tri-glsl.png",
           "sha256": "721671e325b244f4a846d9d80e994f0c461fcf9ab96acce5cc0e4c50578b1961"
         }
+      },
+      "replayer": {
+        "sha256": "d04302000e46984a7729dc3658804dc66ae24c4b3a1a93646275ba63b5571c53",
+        "version": "apitrace 0.0-unknown"
       }
     }
   ]

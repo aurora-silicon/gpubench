@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Compare two staged Mesa builds on one Apple GPU. See batch-gate.md."""
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -30,8 +31,78 @@ class Flag(Exception):
     """Missing evidence, unstable measurement or invalid baseline."""
 
 
+class BudgetExpired(Flag):
+    """The total gate budget elapsed."""
+
+
 class Regression(Exception):
     """Candidate failed an oracle that passed on the baseline."""
+
+
+def arm_error(arm, message):
+    return Regression(message) if arm == "B" else Flag(message)
+
+
+# Kernel MESSAGE only (no hostname). Ignore firmware inventory at boot.
+GPU_SOURCE = re.compile(r"^(?:aurora|asahi)[: ]|\bg(?:13|14|15|16|17|18)\b|\.gpu: |\b(?:agx|drm)\b", re.I)
+GPU_EVENT = re.compile(r"GPU work .*failed|ETIMEDOUT|lost device|device lost|client failed|"
+                       r"timed? ?out|\bfault|pagefault|unhealthy|channel.?error|firmware (?:crash|panic)|"
+                       r"recover(?:y|ed)|guilty|\bhang|restart storm|setup failed|service failed|"
+                       r"failed to (?:flush|send)|retains outstanding|capacity was lost", re.I)
+
+
+def gpu_fault(entry):
+    msg = entry["MESSAGE"]
+    if not isinstance(msg, str):
+        return False
+    if re.search(r"G17: (?:crash logs from the firmware data segment|no fw-data region from the boot loader)", msg):
+        return False
+    return bool(re.search(r"GPU (?:fault|work .*failed)|lost device|device lost", msg, re.I)
+                or (GPU_SOURCE.search(msg) and (GPU_EVENT.search(msg) or int(entry.get("PRIORITY", 6)) <= 4)))
+
+
+class KernelJournal:
+    def __init__(self, evidence):
+        self.evidence = evidence
+        self.command = ["journalctl"]
+        try:
+            self.cursor()
+        except (Flag, OSError, subprocess.CalledProcessError):
+            self.command = ["sudo", "-n", "journalctl"]
+            self.cursor()
+
+    def read(self, *args):
+        return subprocess.check_output([*self.command, "-q", "-k", "-b", "--no-pager", *args],
+                                       text=True, timeout=5)
+
+    def cursor(self):
+        data = self.read("-n", "1", "--show-cursor", "-o", "cat")
+        cursors = [line.removeprefix("-- cursor: ") for line in data.splitlines()
+                   if line.startswith("-- cursor: ")]
+        if not cursors or not cursors[-1]:
+            raise Flag("cannot read current kernel journal cursor")
+        return cursors[-1]
+
+    @contextmanager
+    def observe(self, arm, step):
+        before = self.cursor()
+        try:
+            yield
+        finally:
+            pending = sys.exc_info()[1]
+            try:
+                lines = self.read("--after-cursor", before, "-o", "json")
+                entries = [json.loads(line) for line in lines.splitlines()]
+                faults = [entry["MESSAGE"] for entry in entries if gpu_fault(entry)]
+            except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+                self.evidence.append(dict(arm=arm, step=step, error=str(exc)))
+                if pending is None:
+                    raise Flag(f"{arm} {step}: cannot read kernel log") from exc
+            else:
+                if faults:
+                    self.evidence.append(dict(arm=arm, step=step, cursor=before, lines=faults))
+                    if not isinstance(pending, (subprocess.TimeoutExpired, BudgetExpired)):
+                        raise arm_error(arm, f"{arm} {step}: new GPU fault in kernel log")
 
 
 def digest(path):
@@ -63,10 +134,14 @@ def execute(cmd, env, log, *, timeout=40):
     return result
 
 
-def info(exe, api, env, sha, log):
+def info(exe, api, env, sha, log, arm="A"):
     result = execute([exe, "--info"], env, log)
-    result.check_returncode()
-    data = json.loads(result.stdout)
+    if result.returncode:
+        raise arm_error(arm, f"{arm} {api} --info exited {result.returncode}")
+    try:
+        data = json.loads(result.stdout)
+    except ValueError as exc:
+        raise arm_error(arm, f"{arm} {api} --info produced no valid JSON") from exc
     device = data["renderer" if api == "gl" else "device_name"]
     version = data["version" if api == "gl" else "driver_info"]
     revision = re.search(r"\bgit-([a-fA-F0-9]{7,40})\b", version)
@@ -94,9 +169,11 @@ def measure(row, arm, exe, env, out, stage):
     try:
         record = json.loads(result.stdout)
     except ValueError as exc:
-        raise Flag(f"{arm} {api} {name}: no valid JSON (exit {result.returncode})") from exc
+        raise arm_error(arm, f"{arm} {api} {name}: no valid JSON (exit {result.returncode})") from exc
     with (out / "rows.jsonl").open("a") as f:
         print(json.dumps(dict(arm=arm, api=api, stage=stage, record=record)), file=f)
+    if result.returncode or record.get("status") != "ok":
+        raise arm_error(arm, f"{arm} {api} {name}: {record.get('error') or record.get('status')} (exit {result.returncode})")
     if (record["schema"] != "gpubench-result/1" or record["test"] != name or
             record["depth"] != depth or record["mode"] != "queue" or
             any(record["params"].get(k) != v for k, v in (p.split("=", 1) for p in params))):
@@ -105,8 +182,6 @@ def measure(row, arm, exe, env, out, stage):
     if check.get("valid") is False:
         issue = Regression if arm == "B" else Flag
         raise issue(f"{arm} {api} {name}: output oracle failed")
-    if result.returncode or record["status"] != "ok":
-        raise Flag(f"{arm} {api} {name}: {record['status']} (exit {result.returncode})")
     if stage == "verify":
         if check.get("valid") is not True or not re.fullmatch("[0-9a-fA-F]{8}", check.get("crc", "")):
             raise Flag(f"{arm} {api} {name}: missing verified CRC")
@@ -139,13 +214,28 @@ def classify(blocks):
                 block_deltas=changes, noise=noise, threshold=limit)
 
 
-def bad_fraction(luma):
-    return sum(luma.histogram()[9:]) / (luma.width * luma.height)
+def channel_difference(actual, reference):
+    from PIL import ImageChops
+    red, green, blue = ImageChops.difference(actual.convert("RGB"), reference.convert("RGB")).split()
+    return ImageChops.lighter(ImageChops.lighter(red, green), blue)
 
 
-def replay(manifest, device, envs, out, summary):
+def bad_fraction(diff):
+    return sum(diff.histogram()[9:]) / (diff.width * diff.height)
+
+
+def replayer_identity(binary, env):
+    result = subprocess.run([binary, "--version"], env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, check=True, timeout=5)
+    version = " ".join(result.stdout.split())
+    if not version:
+        raise Flag(f"cannot identify {binary}")
+    return dict(sha256=digest(Path(binary)), version=version)
+
+
+def replay(manifest, device, envs, out, summary, observe):
     # One invocation per capture/arm preserves history between selected frames.
-    from PIL import Image, ImageChops
+    from PIL import Image
     spec = read_json(manifest)
     if spec["device"] != device or not spec["captures"]:
         raise Flag("capture manifest lacks cases for this GPU")
@@ -170,8 +260,13 @@ def replay(manifest, device, envs, out, summary):
             binary = shutil.which(cmd[0], path=envs[arm].get("PATH"))
             if not binary:
                 raise Flag(f"missing replayer: {cmd[0]}")
-            tool_sha = digest(Path(binary))
-            execute(cmd, envs[arm], out / "executors.log", timeout=60).check_returncode()
+            tool = replayer_identity(binary, envs[arm])
+            if tool != case["replayer"]:
+                raise Flag(f"{arm} {trace.name}: replayer version or binary differs from manifest")
+            with observe(arm, trace.name):
+                proc = execute(cmd, envs[arm], out / "executors.log", timeout=60)
+            if proc.returncode:
+                raise arm_error(arm, f"{arm} {trace.name}: replayer exited {proc.returncode}")
             for n, golden in frames.items():
                 path = (manifest.parent / golden["file"]).resolve()
                 if digest(path) != golden["sha256"]:
@@ -180,26 +275,24 @@ def replay(manifest, device, envs, out, summary):
                 matches = [p for p in dest.glob(suffix)
                            if re.search(rf"(?<!\d)0*{int(n)}$", p.stem)]
                 if len(matches) != 1:
-                    raise Flag(f"missing or ambiguous screenshot for {trace.name} {n}")
+                    raise arm_error(arm, f"{arm}: missing or ambiguous screenshot for {trace.name} {n}")
                 with Image.open(matches[0]) as shot, Image.open(path) as ref:
                     mismatch = shot.size != ref.size
                     fraction = region_fraction = None
                     if not mismatch:
-                        # Absolute channel differences avoid cancellation at equal luminance.
-                        diff = ImageChops.difference(shot.convert("RGB"), ref.convert("RGB"))
-                        luma = diff.convert("L")
-                        fraction = bad_fraction(luma)
+                        diff = channel_difference(shot, ref)
+                        fraction = bad_fraction(diff)
                         mismatch = fraction > 0.001
                         if "roi" in golden:
                             x0, y0, x1, y1 = golden["roi"]
                             if not (0 <= x0 < x1 <= shot.width and 0 <= y0 < y1 <= shot.height):
                                 raise Flag(f"invalid region in {path.name}")
-                            region_fraction = bad_fraction(luma.crop((x0, y0, x1, y1)))
+                            region_fraction = bad_fraction(diff.crop((x0, y0, x1, y1)))
                             mismatch |= region_fraction > 0.001
                 summary.append(dict(trace=trace.name, arm=arm, frame=n, bad_fraction=fraction,
                                     region_bad_fraction=region_fraction, golden_sha256=golden["sha256"],
                                     capture_sha256=case["sha256"],
-                                    replayer_sha256=tool_sha))
+                                    replayer_sha256=tool["sha256"], replayer_version=tool["version"]))
                 if mismatch:
                     issue = Regression if arm == "B" else Flag
                     raise issue(f"{arm} {trace.name} frame/call {n} differs from golden")
@@ -210,10 +303,19 @@ def gate(args, summary):
     envs = {k: environment(pair[1]) for k, pair in (("A", args.base), ("B", args.candidate))}
     bins = {api: args.bin.resolve() / f"gpubench-{api}" for api in ("gl", "vk")}
     summary["executors_sha256"] = {api: digest(exe) for api, exe in bins.items()}
+    journal = KernelJournal(summary["kernel_faults"])
+
+    def run(row, arm, stage):
+        api, name, _, _ = row
+        with journal.observe(arm, f"{api}/{name}/{stage}"):
+            return measure(row, arm, bins[api], envs[arm], out, stage)
+
     identities = summary["identity"] = {}
     for arm, (sha, _) in (("A", args.base), ("B", args.candidate)):
-        identities[arm] = {api: info(exe, api, envs[arm], sha, out / "executors.log")
-                           for api, exe in bins.items()}
+        identities[arm] = {}
+        for api, exe in bins.items():
+            with journal.observe(arm, f"{api}/info"):
+                identities[arm][api] = info(exe, api, envs[arm], sha, out / "executors.log", arm)
     for api, field in (("gl", "renderer"), ("vk", "device_name")):
         if identities["A"][api][field] != identities["B"][api][field]:
             raise Flag(f"{api}: selected device changed")
@@ -221,12 +323,12 @@ def gate(args, summary):
     findings = summary["findings"]
     for row in ROWS:
         api, name, _, _ = row
-        crc = {arm: measure(row, arm, bins[api], envs[arm], out, "verify") for arm in "AB"}
+        crc = {arm: run(row, arm, "verify") for arm in "AB"}
         summary["crcs"][f"{api}/{name}"] = crc
         if crc["A"] != crc["B"]:
             findings.append(("FLAG", f"{api}/{name}: CRC changed within oracle tolerance"))
     if args.traces:
-        replay(args.traces, device, envs, out, summary["replays"])
+        replay(args.traces, device, envs, out, summary["replays"], journal.observe)
     if not args.visual_only:
         for row in ROWS:
             api, name, _, _ = row
@@ -234,7 +336,7 @@ def gate(args, summary):
             for order in ORDERS:
                 block = {"A": [], "B": []}
                 for arm in order:
-                    block[arm].append(measure(row, arm, bins[api], envs[arm], out, "perf"))
+                    block[arm].append(run(row, arm, "perf"))
                 blocks.append(block)
             stats = classify(blocks)
             summary["perf"][f"{api}/{name}"] = stats
@@ -255,18 +357,17 @@ def main():
     args.out.mkdir()
     start = time.monotonic()
     summary = dict(kernel=platform.release(), requested_sha={"A": args.base[0], "B": args.candidate[0]},
-                   crcs={}, perf={}, replays=[], findings=[],
+                   crcs={}, perf={}, replays=[], findings=[], kernel_faults=[],
                    scope="gpubench + captures" if args.traces else "gpubench only",
                    visual_only=args.visual_only)
     def deadline(signum, frame):
-        raise Flag("batch hit its 15-minute runtime budget")
+        raise BudgetExpired("batch hit its 15-minute runtime budget")
 
     signal.signal(signal.SIGALRM, deadline)
     signal.alarm(900)
     try:
         verdict = gate(args, summary)
-    except (Flag, Regression, OSError, ValueError, KeyError, TypeError, ImportError,
-            subprocess.SubprocessError) as exc:
+    except Exception as exc:  # An infrastructure error must never signal a regression to git bisect.
         verdict = "FAIL" if isinstance(exc, Regression) else "FLAG"
         summary["findings"].append((verdict, str(exc)))
         if any(level == "FAIL" for level, _ in summary["findings"]):

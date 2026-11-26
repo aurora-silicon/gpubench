@@ -19,7 +19,7 @@ python3 tools/batch-gate.py --bin /opt/gpubench/bin --out run-001 \
     --base 25f15c435b61 a.json --candidate 8f515f859e15 b.json --traces corpus/j700.json
 ```
 
-The runner checks the Mesa Git revision reported by both APIs and records device identity, executable hashes and kernel release. Use a fresh output directory. The 15-minute runtime limit returns FLAG on expiry. It retains the executor logs, raw JSON rows, screenshots, CRCs, block deltas and elapsed seconds in the run directory. Omit `--traces` for an explicitly gpubench-only row. Use `--visual-only` on a frequency-constrained machine. Record power, temperature and GPU health outside the runner.
+The runner checks the Mesa Git revision reported by both APIs and records device identity, executable hashes and kernel release. Use a fresh output directory. The 15-minute runtime limit returns FLAG on expiry. It retains the executor logs, raw JSON rows, screenshots, CRCs, block deltas and elapsed seconds in the run directory. Omit `--traces` for an explicitly gpubench-only row. Use `--visual-only` on a frequency-constrained machine. Record power and temperature during the run. The runner checks the current kernel journal around each GPU invocation and retains new GPU fault lines with their arm and step. It needs journal read access directly or through noninteractive sudo. An unreadable journal makes the result inconclusive.
 
 ## Capture manifest
 
@@ -33,6 +33,7 @@ The manifest binds goldens to the device name from `gpubench-vk --info`. Paths a
   "captures": [{
     "file": "scene.gfxr",
     "sha256": "<capture SHA-256>",
+    "replayer": {"version": "<whitespace-normalized --version output>", "sha256": "<binary SHA-256>"},
     "frames": {
       "2": {"file": "g17p/scene-2.png", "sha256": "<image SHA-256>"}
     }
@@ -55,10 +56,10 @@ The J700 goldens were enrolled on Mesa `25f15c435b61` and checked against softwa
 | Exit | Meaning |
 | --- | --- |
 | 0 PASS | All checks in the requested scope passed. |
-| 1 FAIL | A candidate readback or image differs outside tolerance, or every timing block exceeds the slowdown threshold. Repeat the case to confirm. |
+| 1 FAIL | The candidate crashes after its base control passed, produces invalid output, logs a new GPU fault, or exceeds the slowdown threshold in every timing block. Repeat the case to confirm. |
 | 2 FLAG | A required measurement is missing, the baseline is invalid, the tolerant readback changed CRC, or timing is inconclusive. |
 
-GL postfx uses `--verify` at 1080p with one sample, the configuration that reproduced the G13/G14 multi-pass regression. The Vulkan postfx case covers 4× MSAA. Vulkan checks its output internally. Image comparison requires identical dimensions and allows at most 0.1% of pixels with a luma-weighted absolute RGB difference above 8 on the 8-bit scale. PNG and BMP files are compared as decoded RGB. A baseline that misses its golden flags the run.
+GL postfx uses `--verify` at 1080p with one sample, the configuration that reproduced the G13/G14 multi-pass regression. The Vulkan postfx case covers 4× MSAA. Vulkan checks its output internally. Image comparison requires identical dimensions and allows at most 0.1% of pixels with a difference above 8 in any RGB channel on the 8-bit scale. PNG and BMP files are compared as decoded RGB. A baseline that misses its golden flags the run.
 
 For each case the runner alternates ABBA and BAAB twice, giving eight process medians per arm. Each process measures five 450 ms untimed submission windows after 250 ms of warm-up. Positive deltas mean the candidate took longer. The threshold is the larger of 5% and three times the higher arm's scaled median absolute deviation divided by its median. A median block slowdown above 5% or within-arm noise above 5% flags the case when a failure is inconclusive. Calibrate on repeated A/A runs before making the pilot a required merge check.
 
@@ -70,4 +71,4 @@ python3 tools/bisect-batch.py /src/mesa "$base" "$batch_tip" -- /path/to/stage-a
 
 The caller supplies a machine-specific adapter taking two Git SHAs (baseline and candidate prefix). It stages or boots the builds, invokes the row in a fresh evidence directory and returns 0 for pass, 1 for a reproduced regression, 2 for an inconclusive row. Map build, deployment and infrastructure failures to 2. Keep the oracle and its fingerprint fixed during bisection so different failures cannot be confused.
 
-The wrapper runs the tip once on the successful path. On failure it repeats the tip, verifies A/A, bisects the immutable first-parent history and repeats the adjacent passing and failing prefixes. It invokes the adapter without modifying the checkout. An inconclusive midpoint preserves the bracket. As with Git bisect, interpret the result as a transition under the tested ordering. Interacting or intermittent failures need separate attribution.
+The wrapper runs the tip once on the successful path. On failure it repeats the tip, verifies A/A, bisects the immutable first-parent history and repeats the adjacent passing and failing prefixes. It invokes the adapter without modifying the checkout. The default adapter timeout is 900 seconds per probe. An inconclusive midpoint preserves the bracket. As with Git bisect, interpret the result as a transition under the tested ordering. Interacting or intermittent failures need separate attribution.

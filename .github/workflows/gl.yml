@@ -9,7 +9,9 @@ jobs:
       - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build pkg-config libepoxy-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers libgl1-mesa-dri glslang-tools
+          sudo apt-get install -y cmake ninja-build pkg-config libepoxy-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers libgl1-mesa-dri glslang-tools python3-pytest python3-pil
+      - name: Runner and gate tests
+        run: /usr/bin/python3 -m pytest -q tools/tests
       - name: Build
         run: |
           cmake -S . -B build -G Ninja -DGB_BUILD_GL=ON -DBUILD_TESTING=ON
