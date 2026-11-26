@@ -16,7 +16,7 @@ Use the same `gpubench-gl` and `gpubench-vk` binaries for both arms. Stage the b
 
 ```sh
 python3 tools/batch-gate.py --bin /opt/gpubench/bin --out run-001 \
-    --base 0539df01ea a.json --candidate 1eae3d92d5 b.json --traces j700.json
+    --base 25f15c435b61 a.json --candidate 8f515f859e15 b.json --traces corpus/j700.json
 ```
 
 The runner checks the Mesa Git revision reported by both APIs and records device identity, executable hashes and kernel release. Use a fresh output directory. The 15-minute runtime limit returns FLAG on expiry. It retains the executor logs, raw JSON rows, screenshots, CRCs, block deltas and elapsed seconds in the run directory. Omit `--traces` for an explicitly gpubench-only row. Use `--visual-only` on a frequency-constrained machine. Record power, temperature and GPU health outside the runner.
@@ -40,7 +40,15 @@ The manifest binds goldens to the device name from `gpubench-vk --info`. Paths a
 }
 ```
 
-Small public fixtures for initial enrollment are [GFXReconstruct's triangle](https://github.com/LunarG/gfxreconstruct/blob/4401228c791b11fb7ea15b93795cbd1e938307c0/test/known_good/triangle.gfxr) (frames 1 and 2) and [apitrace's GLSL triangle](https://github.com/apitrace/apitrace-tests/blob/7b1b37ed02c3c1de9a7979129f7b14d041847d18/traces/tri_glsl.trace) (call 6935). Produce and inspect goldens on a known-good baseline for each GPU. Keep the capture, selected calls, independent reference and approved golden hashes together.
+The supplied J700 manifest selects Vulkan frames 1 and 2 and GL call 6935. Copy the goldens and fetch the pinned upstream captures once. The runner verifies their hashes before replay.
+
+```sh
+cp -R tools/batch-gate corpus
+curl -fL https://raw.githubusercontent.com/LunarG/gfxreconstruct/4401228c791b11fb7ea15b93795cbd1e938307c0/test/known_good/triangle.gfxr -o corpus/triangle.gfxr
+curl -fL https://raw.githubusercontent.com/apitrace/apitrace-tests/7b1b37ed02c3c1de9a7979129f7b14d041847d18/traces/tri_glsl.trace -o corpus/tri_glsl.trace
+```
+
+The J700 goldens were enrolled on Mesa `25f15c435b61` and checked against software replay. The Vulkan images matched within tolerance. The GL reference differed above tolerance on 224 of 62,500 pixels, all along the two sloped triangle edges. The J700 baseline reproduced its own reference. Keep independent goldens for other GPUs and review changes to an existing golden separately.
 
 ## Interpreting a result
 

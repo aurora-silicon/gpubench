@@ -1,0 +1,29 @@
+{
+  "device": "Apple A18 Pro (G17P B1)",
+  "captures": [
+    {
+      "file": "triangle.gfxr",
+      "sha256": "c52c469ca52c9f5f7e01500eefc20e92ee962bc2364d34fdd85b831dfcaabcb0",
+      "frames": {
+        "1": {
+          "file": "goldens/j700/triangle.png",
+          "sha256": "862b27a66304d172a6ca2a77ea75c611212a480ae842f74553336b59dc607abd"
+        },
+        "2": {
+          "file": "goldens/j700/triangle.png",
+          "sha256": "862b27a66304d172a6ca2a77ea75c611212a480ae842f74553336b59dc607abd"
+        }
+      }
+    },
+    {
+      "file": "tri_glsl.trace",
+      "sha256": "ae070bbfd74f3d988e057ff74ae13f51fa1896b4b2e99e51e764ea4b6eb370d3",
+      "frames": {
+        "6935": {
+          "file": "goldens/j700/tri-glsl.png",
+          "sha256": "721671e325b244f4a846d9d80e994f0c461fcf9ab96acce5cc0e4c50578b1961"
+        }
+      }
+    }
+  ]
+}
