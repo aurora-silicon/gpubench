@@ -409,8 +409,22 @@ def test_unreadable_compositor_is_read_through_sudo(tmp_path, monkeypatch, ms, e
     verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=[start, end])
     assert verdict == expected
     unreadable = summary["gpu_clients"]["unreadable"]
-    assert unreadable["at_start"] == ["kwin_wayland[2114]"]
+    assert unreadable["at_start"] == [dict(client="9", **client("kwin_wayland", 2114, 500))]
     assert unreadable["used_ms"] == {"kwin_wayland[2114]": ms}
+
+
+@pytest.mark.parametrize("hidden", [False, True])
+def test_clients_of_one_process_add_up(tmp_path, monkeypatch, hidden):
+    # Each of four compositor clients stays under the limit; together they do not.
+    def clients(ms):
+        return {str(cid): client("kwin_wayland", 2114, ms) for cid in range(9, 13)}
+    if hidden:
+        views = [dict(clients=clients(0), errors=[]), dict(clients=clients(80), errors=[])]
+        verdict, summary = gate_with_clients(tmp_path, monkeypatch, [desktop(0)], hidden=views)
+        assert summary["gpu_clients"]["unreadable"]["used_ms"] == {"kwin_wayland[2114]": 320}
+    else:
+        verdict, summary = gate_with_clients(tmp_path, monkeypatch, [clients(0), clients(8)])
+    assert verdict == "FLAG"
 
 
 def test_without_sudo_the_gap_is_recorded(tmp_path, monkeypatch):

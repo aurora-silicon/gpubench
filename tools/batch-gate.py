@@ -219,13 +219,14 @@ class GpuClients:
 
     @staticmethod
     def charge(now, seen):
-        """Return {name: ns} used since last seen, and update the counters."""
+        """Return {process: ns} used since last seen, and update the counters."""
         used = {}
         for cid, c in now.items():
             ns = c["busy_ns"] - seen.get(cid, 0)  # A client never seen counts all of its time.
             seen[cid] = c["busy_ns"]
-            if ns > 0:
-                used[f"{c['comm']}[{c['pid']}]"] = ns
+            if ns > 0:  # One process can hold several clients.
+                name = f"{c['comm']}[{c['pid']}]"
+                used[name] = used.get(name, 0) + ns
         return used
 
     def check(self, arm, step):
@@ -258,7 +259,7 @@ class GpuClients:
         before = {cid: c for cid, c in self.hidden_start["clients"].items() if cid not in self.seen}
         after = {cid: c for cid, c in end["clients"].items() if cid not in self.seen}
         used = self.charge(after, {cid: c["busy_ns"] for cid, c in before.items()})
-        self.record["unreadable"] = dict(at_start=sorted(f"{c['comm']}[{c['pid']}]" for c in before.values()),
+        self.record["unreadable"] = dict(at_start=[dict(client=cid, **c) for cid, c in sorted(before.items())],
                                          used_ms={k: round(ns / 1e6, 3) for k, ns in used.items()})
         for error in self.hidden_start["errors"] + end["errors"]:
             self.flag("unreadable", f"cannot read the GPU time of another DRM client ({error})")
