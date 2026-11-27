@@ -1630,8 +1630,10 @@ postfx_record(void *p, VkCommandBuffer cb, uint64_t k)
       gb_img_barrier(cb, dst->img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+      /* The full-screen triangle writes every texel, so the previous contents are not needed: DONT_CARE, as
+       * the Metal suite's downsample passes (MTLLoadActionDontCare). */
       float z[4] = {0, 0, 0, 1};
-      gb_begin_render(cb, dst, z);
+      gb_begin_render_op(cb, dst, z, VK_ATTACHMENT_LOAD_OP_DONT_CARE);
       vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, st->down_pipe);
       vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, st->down_layout, 0, 1, &st->down_sets[i], 0, NULL);
       struct { float iw, ih, siw, sih; uint32_t bp; } pc = {
@@ -1684,9 +1686,9 @@ postfx_record(void *p, VkCommandBuffer cb, uint64_t k)
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
    }
 
-   /* 4. Final ACES tonemap + vignette into RGBA8. */
+   /* 4. Final ACES tonemap + vignette into RGBA8 (full-screen, DONT_CARE as in the Metal suite). */
    float z[4] = {0, 0, 0, 1};
-   gb_begin_render(cb, &st->final_img, z);
+   gb_begin_render_op(cb, &st->final_img, z, VK_ATTACHMENT_LOAD_OP_DONT_CARE);
    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, st->tone_pipe);
    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, st->tone_layout, 0, 1, &st->tone_set, 0, NULL);
    float tpc[2] = {1.0f / (float)st->w, 1.0f / (float)st->h};

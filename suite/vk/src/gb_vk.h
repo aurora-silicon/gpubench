@@ -171,6 +171,10 @@ void gb_texture_pipe(struct gb_vk *vk, const uint32_t *vs, size_t vs_bytes, cons
 void gb_pipe_destroy(struct gb_vk *vk, struct gb_pipe *p);
 /* Begin dynamic rendering with a cleared color attachment, set viewport/scissor. */
 void gb_begin_render(VkCommandBuffer cb, const struct gb_img *im, const float clear[4]);
+/* gb_begin_render() with the colour attachment's load op given: DONT_CARE for a pass whose draw covers every
+ * pixel, as the Metal suite's MTLLoadActionDontCare. */
+void gb_begin_render_op(VkCommandBuffer cb, const struct gb_img *im, const float clear[4],
+                        VkAttachmentLoadOp load_op);
 
 /* ---- submission streams ----
  * A stream is a ring of `depth` command buffers on one queue with a timeline
