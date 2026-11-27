@@ -493,6 +493,11 @@ gb_run_render_gbuf_pre_gfx(const struct gb_opts *o)
       gb_result_simple(o, o->mode, 1, NULL, "fail", "cbs must be 2..16");
       return 0;
    }
+   if (o->mode != GB_MODE_QUEUE) {
+      gb_result_simple(o, o->mode, 1, NULL, "skip",
+                       "render.gbuf_pre_gfx supports mode=queue only");
+      return 0;
+   }
    uint32_t ncbs = (uint32_t)cbs_l;
    int def_depths[2] = {1, 2};
    const int *depths = o->ndepths ? o->depths : def_depths;
@@ -624,13 +629,35 @@ gb_run_render_gbuf_pre_gfx(const struct gb_opts *o)
                   .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                   .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                   .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT |
-                                  VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                  VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+                                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                   .dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT |
-                                   VK_ACCESS_2_SHADER_READ_BIT};
+                                   VK_ACCESS_2_SHADER_READ_BIT |
+                                   VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                                   VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT};
                VkDependencyInfo di2 = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                                        .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
                vkCmdPipelineBarrier2(cb, &di2);
             }
+            /* Attachment dependency between consecutive CBs (c > 0) and across
+             * back-to-back submissions (c == 0) sharing the G-buffer targets. */
+            VkMemoryBarrier2 att_mb = {
+               .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+               .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                               VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+               .srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+               .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                               VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                               VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+               .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+                                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT};
+            VkDependencyInfo att_di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                       .memoryBarrierCount = 1, .pMemoryBarriers = &att_mb};
+            vkCmdPipelineBarrier2(cb, &att_di);
             VkRenderingAttachmentInfo catts[4];
             for (int i = 0; i < 4; i++) {
                catts[i] = (VkRenderingAttachmentInfo){
@@ -699,7 +726,7 @@ gb_run_render_gbuf_pre_gfx(const struct gb_opts *o)
       vkDestroySemaphore(vk.dev, tl, NULL);
 
       struct gb_result res;
-      gb_result_begin(&res, o, o->mode, depth, NULL);
+      gb_result_begin(&res, o, GB_MODE_QUEUE, depth, NULL);
       gb_result_run_info(&res, o->warmup_ms, o->runs, o->run_ms);
       if (bad) {
          gb_result_finish(&res, "fail", NULL, "GPU timeout");
