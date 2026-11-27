@@ -29,7 +29,8 @@ set(GB_SHADERS
   bubo.vert bubo.frag
   fp16_gemv.comp fp16_alumix.comp
   postfx_scene.vert postfx_scene.frag postfx_down.frag postfx_up.frag postfx_tonemap.frag
-  blur_fp32_h.comp blur_fp32_v.comp corner_ring.comp desc_search.comp chain_step.comp msaa_merge.frag)
+  blur_fp32_h.comp blur_fp32_v.comp corner_ring.comp desc_search.comp chain_step.comp msaa_merge.frag
+  deferred_light.comp)
 set(spv_files)
 foreach(s IN LISTS GB_SHADERS)
   set(out ${CMAKE_CURRENT_BINARY_DIR}/spv/${s}.spv)

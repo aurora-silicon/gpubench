@@ -64,6 +64,7 @@ GB_SHADER(corner_ring_comp)
 GB_SHADER(desc_search_comp)
 GB_SHADER(chain_step_comp)
 GB_SHADER(msaa_merge_frag)
+GB_SHADER(deferred_light_comp)
 #undef GB_SHADER
 
 #define GB_SPV(n) n, n##_size
