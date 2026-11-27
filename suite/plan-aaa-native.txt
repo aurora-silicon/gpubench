@@ -1,0 +1,23 @@
+# gpubench AAA native-resolution plan (Vulkan), chunk aaa-native.
+# Run via: tools/run-suite.sh --api vk --bin build/bin --out <dir> --plans suite/plan-aaa-native.txt
+# Kept separate from suite/plan-90pct-w2.txt, which the Metal executor runs too.
+#
+# chunk      lane   test                 arguments
+
+# G1. One G-buffer pass split into render pass instances that each load and store every attachment
+#     (GTA V Enhanced records ~21 per submission at 3024x1964, one command buffer each). Per extra
+#     split = (us_per_submit(splits) - us_per_submit(splits=1)) / (splits - 1); target for gap=none:
+#     at most 5% of splits=1 (the splits run as one tile pass). Every row CRC-checks all targets.
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=1 --param mode=multi_cb --param gap=none --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=8 --param mode=multi_cb --param gap=none --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=22 --param mode=multi_cb --param gap=none --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=8 --param mode=one_cb --param gap=none --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=22 --param mode=one_cb --param gap=none --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=8 --param mode=multi_cb --param gap=uav --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=8 --param mode=multi_cb --param gap=decay --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=22 --param mode=multi_cb --param gap=decay --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=8 --param mode=multi_cb --param gap=compute --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=5 --param fmt=rgba8 --param splits=22 --param mode=multi_cb --param gap=none --param res=2268x1473
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=2 --param fmt=rgba16 --param splits=1 --param mode=multi_cb --param gap=none --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=2 --param fmt=rgba16 --param splits=8 --param mode=multi_cb --param gap=none --param res=native
+aaa-native   suite  render.pass_split    --depths 1,2 --param targets=2 --param fmt=rgba16 --param splits=22 --param mode=multi_cb --param gap=none --param res=native

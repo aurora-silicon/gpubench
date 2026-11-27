@@ -64,6 +64,10 @@ GB_SHADER(corner_ring_comp)
 GB_SHADER(desc_search_comp)
 GB_SHADER(chain_step_comp)
 GB_SHADER(msaa_merge_frag)
+/* AAA native-resolution shaders */
+GB_SHADER(pass_split_vert)
+GB_SHADER(pass_split_frag)
+GB_SHADER(pass_split_gap_comp)
 #undef GB_SHADER
 
 #define GB_SPV(n) n, n##_size

@@ -1390,6 +1390,7 @@ const struct gb_test gb_tests[] = {
    {"compute.desc_search", gb_run_compute_desc_search},
    {"compute.chain", gb_run_compute_chain},
    {"render.msaa_merge", gb_run_render_msaa_merge},
+   {"render.pass_split", gb_run_render_pass_split},
    /* Queue rebind & context-churn benchmarks */
    {"queue.rebind", gb_run_queue_rebind},
    {"queue.churn", gb_run_queue_churn},

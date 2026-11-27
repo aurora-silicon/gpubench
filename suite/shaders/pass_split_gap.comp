@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0-only
+#version 450
+// render.pass_split gap=compute: a 64-thread dispatch between two passes,
+// like a culling pass between G-buffer splits. It writes a scratch buffer
+// nothing reads.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) buffer B { uint v[]; } b;
+layout(push_constant) uniform PC { uint pass; } pc;
+void main()
+{
+   b.v[pc.pass * 64u + gl_GlobalInvocationID.x] = gl_GlobalInvocationID.x;
+}
