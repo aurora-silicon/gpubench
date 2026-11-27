@@ -41,3 +41,8 @@ int gb_run_render_msaa_merge(const struct gb_opts *o);
 /* Queue rebind & context-churn Vulkan benchmarks (tests_rebind.c). */
 int gb_run_queue_rebind(const struct gb_opts *o);
 int gb_run_queue_churn(const struct gb_opts *o);
+
+/* GTA V / D3D12-on-Vulkan driver bottleneck benchmarks (tests_gtav.c). */
+int gb_run_render_storage_meta_discard(const struct gb_opts *o);
+int gb_run_render_aliased_heap_pipeline(const struct gb_opts *o);
+int gb_run_render_gbuf_pre_gfx(const struct gb_opts *o);
