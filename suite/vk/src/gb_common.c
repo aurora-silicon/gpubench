@@ -4,28 +4,43 @@
 
 #include <errno.h>
 #include <math.h>
-#include <pthread.h>
-#include <spawn.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <pthread.h>
+#include <spawn.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
-
 extern char **environ;
+#endif
 
 /* ---------------- time ---------------- */
 
 uint64_t
 gb_now_ns(void)
 {
+#ifdef _WIN32
+   static LARGE_INTEGER freq;
+   if (!freq.QuadPart)
+      QueryPerformanceFrequency(&freq);
+   LARGE_INTEGER c;
+   QueryPerformanceCounter(&c);
+   uint64_t q = (uint64_t)c.QuadPart;
+   uint64_t f = (uint64_t)freq.QuadPart;
+   return (q / f) * 1000000000ull + ((q % f) * 1000000000ull) / f;
+#else
    struct timespec ts;
    clock_gettime(CLOCK_MONOTONIC, &ts);
    return (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+#endif
 }
 
 void
@@ -37,9 +52,14 @@ gb_sleep_until_ns(uint64_t t)
          return;
       uint64_t d = t - now;
       if (d > 2000000) {
+#ifdef _WIN32
+         DWORD ms = (DWORD)((d - 1000000) / 1000000ull);
+         Sleep(ms ? ms : 1);
+#else
          struct timespec ts = {.tv_sec = (d - 1000000) / 1000000000ull,
                                .tv_nsec = (d - 1000000) % 1000000000ull};
          nanosleep(&ts, NULL);
+#endif
       }
    }
 }
@@ -614,6 +634,58 @@ gb_result_check(struct gb_result *r, const struct gb_check *chk)
 
 /* ---------------- barrier ---------------- */
 
+#ifdef _WIN32
+struct gb_barrier {
+   CRITICAL_SECTION cs;
+   CONDITION_VARIABLE cv;
+   int n, waiting;
+   unsigned gen;
+};
+
+struct gb_barrier *
+gb_barrier_new(int n)
+{
+   struct gb_barrier *b = calloc(1, sizeof(*b));
+   InitializeCriticalSection(&b->cs);
+   InitializeConditionVariable(&b->cv);
+   b->n = n;
+   return b;
+}
+
+void
+gb_barrier_wait(struct gb_barrier *b)
+{
+   EnterCriticalSection(&b->cs);
+   unsigned gen = b->gen;
+   if (++b->waiting == b->n) {
+      b->waiting = 0;
+      b->gen++;
+      WakeAllConditionVariable(&b->cv);
+   } else {
+      while (gen == b->gen)
+         SleepConditionVariableCS(&b->cv, &b->cs, INFINITE);
+   }
+   LeaveCriticalSection(&b->cs);
+}
+
+void
+gb_barrier_free(struct gb_barrier *b)
+{
+   DeleteCriticalSection(&b->cs);
+   free(b);
+}
+
+int gb_write_all(int fd, const void *p, size_t n) { (void)fd; (void)p; (void)n; return -1; }
+int gb_read_all(int fd, void *p, size_t n) { (void)fd; (void)p; (void)n; return -1; }
+int gb_wire_put_samples(int fd, const struct gb_samples *s) { (void)fd; (void)s; return -1; }
+int gb_wire_get_samples(int fd, struct gb_samples *s) { (void)fd; (void)s; return -1; }
+int gb_spawn_children(const struct gb_opts *o, int n, struct gb_child *out) { (void)o; (void)n; (void)out; return -1; }
+int gb_child_wait_ready(struct gb_child *c) { (void)c; return -1; }
+int gb_child_send_u64(struct gb_child *c, uint64_t v) { (void)c; (void)v; return -1; }
+int gb_child_reap(struct gb_child *c) { (void)c; return -1; }
+void gb_child_ready(void) {}
+uint64_t gb_child_recv_u64(void) { return 0; }
+#else
 struct gb_barrier {
    pthread_mutex_t m;
    pthread_cond_t c;
@@ -813,6 +885,7 @@ gb_child_recv_u64(void)
       return 0;
    return v;
 }
+#endif
 
 /* ---------------- passes ---------------- */
 
