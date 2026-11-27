@@ -847,11 +847,18 @@ gb_pipe_destroy(struct gb_vk *vk, struct gb_pipe *p)
 void
 gb_begin_render(VkCommandBuffer cb, const struct gb_img *im, const float clear[4])
 {
+   gb_begin_render_op(cb, im, clear, VK_ATTACHMENT_LOAD_OP_CLEAR);
+}
+
+void
+gb_begin_render_op(VkCommandBuffer cb, const struct gb_img *im, const float clear[4],
+                   VkAttachmentLoadOp load_op)
+{
    VkRenderingAttachmentInfo ca = {
       .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
       .imageView = im->view,
       .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+      .loadOp = load_op,
       .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
       .clearValue.color.float32 = {clear[0], clear[1], clear[2], clear[3]},
    };
