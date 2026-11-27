@@ -41,3 +41,8 @@ int gb_run_render_msaa_merge(const struct gb_opts *o);
 /* Queue rebind & context-churn Vulkan benchmarks (tests_rebind.c). */
 int gb_run_queue_rebind(const struct gb_opts *o);
 int gb_run_queue_churn(const struct gb_opts *o);
+
+/* AAA native-resolution draw/timestamp/tiny-pass benchmarks (tests_aaa_native.c). */
+int gb_run_render_ts_query_passes(const struct gb_opts *o);
+int gb_run_render_dx11_draws(const struct gb_opts *o);
+int gb_run_render_tiny_passes(const struct gb_opts *o);

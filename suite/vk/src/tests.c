@@ -1393,6 +1393,10 @@ const struct gb_test gb_tests[] = {
    /* Queue rebind & context-churn benchmarks */
    {"queue.rebind", gb_run_queue_rebind},
    {"queue.churn", gb_run_queue_churn},
+   /* AAA native-resolution draw/timestamp/tiny-pass benchmarks */
+   {"render.ts_query_passes", gb_run_render_ts_query_passes},
+   {"render.dx11_draws", gb_run_render_dx11_draws},
+   {"render.tiny_passes", gb_run_render_tiny_passes},
    {NULL, NULL},
 };
 

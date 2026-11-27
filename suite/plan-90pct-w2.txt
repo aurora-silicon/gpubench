@@ -33,3 +33,15 @@ aaa-xfer     suite  transfer.ops         --depths 1,2 --param kind=mipchain
 aaa-postfx   suite  render.postfx        --depths 1,2 --param res=1080p --param msaa=4
 aaa-postfx   suite  render.postfx        --depths 1,2 --param res=1440p --param msaa=1
 aaa-postfx   suite  render.postfx        --depths 1,2 --param res=1440p --param msaa=4
+
+# 7. AAA native-resolution draw-path, timestamp-query and tiny-pass regression guards
+aaa-native   suite  render.ts_query_passes --depths 1,2 --param passes=16 --param mode=none --param shape=passes --param res=native
+aaa-native   suite  render.ts_query_passes --depths 1,2 --param passes=16 --param mode=ts_copy --param shape=passes --param res=native
+aaa-native   suite  render.ts_query_passes --depths 1,2 --param passes=32 --param mode=ts_copy --param shape=dxvk --param res=256x256
+aaa-native   suite  render.dx11_draws      --depths 1,2 --param draws=1200 --param progs=1 --param bind=dynoff --param target=color --param res=native
+aaa-native   suite  render.dx11_draws      --depths 1,2 --param draws=1200 --param progs=1 --param bind=dynoff_vb --param target=color --param res=native
+aaa-native   suite  render.dx11_draws      --depths 1,2 --param draws=1200 --param progs=1 --param bind=push --param target=color --param res=native
+aaa-native   suite  render.dx11_draws      --depths 1,2 --param draws=1200 --param progs=4 --param bind=dynoff_vb --param target=shadow
+aaa-native   suite  render.dx11_draws      --depths 1,2 --param draws=1200 --param progs=4 --param bind=dynoff_vb --param target=shadow_atlas
+aaa-native   suite  render.tiny_passes     --depths 1,4 --param base=1134x736 --param fmt=b10g11r11 --param passes=20
+aaa-native   suite  render.tiny_passes     --depths 1,4 --param base=2268x1473 --param fmt=rgba16f --param passes=20
