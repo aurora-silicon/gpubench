@@ -3949,6 +3949,185 @@ static const struct mtest t_render_postfx = {
    .setup = postfx_setup, .encode = postfx_encode, .derive = postfx_derive, .check = postfx_check,
 };
 
+/* ---- render.pass_chain ---- */
+
+@interface GBPassChainState : NSObject
+@property(nonatomic) uint32_t kind, w, h, passes;
+@property(nonatomic, strong) id<MTLTexture> initTex;
+@property(nonatomic, strong) NSArray<id<MTLTexture>> *imgs;
+@property(nonatomic, strong) id<MTLSamplerState> nearSampler;
+@property(nonatomic, strong) id<MTLRenderPipelineState> pipe;
+@property(nonatomic, strong) id<MTLBuffer> visBuf;
+@property(nonatomic) uint32_t refCrc;
+@end
+@implementation GBPassChainState @end
+
+static bool
+parse_pass_chain_res_m(const char *s, uint32_t *w, uint32_t *h)
+{
+   if (!strcmp(s, "tiny")) *w = 60, *h = 33;
+   else if (!strcmp(s, "small")) *w = 320, *h = 180;
+   else if (!strcmp(s, "half")) *w = 960, *h = 540;
+   else if (!strcmp(s, "1080p")) *w = 1920, *h = 1080;
+   else return false;
+   return true;
+}
+
+static uint16_t
+pc_f32_to_f16_m(float f)
+{
+   uint32_t u;
+   memcpy(&u, &f, sizeof(u));
+   uint32_t sign = (u >> 16) & 0x8000u;
+   int32_t exp = (int32_t)((u >> 23) & 0xffu) - 127 + 15;
+   uint32_t mant = (u >> 13) & 0x3ffu;
+   if (exp <= 0) return (uint16_t)sign;
+   if (exp >= 31) return (uint16_t)(sign | 0x7c00u);
+   return (uint16_t)(sign | ((uint32_t)exp << 10) | mant);
+}
+
+static id
+pass_chain_setup(const struct gb_opts *o, char *err, size_t n)
+{
+   const char *kind_s = gb_param(o, "kind", "all_bar");
+   uint32_t kind = 0;
+   if (!strcmp(kind_s, "all_bar")) kind = 0;
+   else if (!strcmp(kind_s, "frag_bar")) kind = 1;
+   else if (!strcmp(kind_s, "indep")) kind = 2;
+   else if (!strcmp(kind_s, "oq_bar")) kind = 3;
+   else {
+      snprintf(err, n, "kind must be all_bar, frag_bar, indep or oq_bar");
+      return nil;
+   }
+   uint32_t w = 0, h = 0;
+   if (!parse_pass_chain_res_m(gb_param(o, "res", "tiny"), &w, &h)) {
+      snprintf(err, n, "res must be tiny, small, half or 1080p");
+      return nil;
+   }
+   long passes = gb_param_int(o, "passes", 14);
+   if (passes < 2 || passes > 64) {
+      snprintf(err, n, "passes must be 2..64");
+      return nil;
+   }
+
+   GBPassChainState *st = [GBPassChainState new];
+   st.kind = kind; st.w = w; st.h = h; st.passes = (uint32_t)passes;
+   st.initTex = tex_ex_opt(w, h, MTLPixelFormatRGBA16Float, 1, MTLStorageModePrivate,
+                           MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, false);
+   uint32_t nimgs = (kind == 2u) ? st.passes : 2u;
+   NSMutableArray<id<MTLTexture>> *imgs = [NSMutableArray arrayWithCapacity:nimgs];
+   MTLTextureUsage u = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+   bool tracked = (kind != 2u);
+   for (uint32_t i = 0; i < nimgs; i++)
+      [imgs addObject:tex_ex_opt(w, h, MTLPixelFormatRGBA16Float, 1, MTLStorageModePrivate, u, tracked)];
+   st.imgs = imgs;
+
+   id<MTLCommandQueue> q = new_queue(2);
+   id<MTLCommandBuffer> cb = [q commandBuffer];
+   MTLRenderPassDescriptor *crp = [MTLRenderPassDescriptor renderPassDescriptor];
+   crp.colorAttachments[0].texture = st.initTex;
+   crp.colorAttachments[0].loadAction = MTLLoadActionClear;
+   crp.colorAttachments[0].storeAction = MTLStoreActionStore;
+   crp.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
+   id<MTLRenderCommandEncoder> ce = [cb renderCommandEncoderWithDescriptor:crp];
+   [ce endEncoding];
+   [cb commit];
+   [cb waitUntilCompleted];
+
+   MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new];
+   sd.minFilter = MTLSamplerMinMagFilterNearest;
+   sd.magFilter = MTLSamplerMinMagFilterNearest;
+   sd.sAddressMode = MTLSamplerAddressModeClampToEdge;
+   sd.tAddressMode = MTLSamplerAddressModeClampToEdge;
+   st.nearSampler = [g_dev newSamplerStateWithDescriptor:sd];
+
+   NSError *merr = nil;
+   MTLRenderPipelineDescriptor *rp = [MTLRenderPipelineDescriptor new];
+   rp.vertexFunction = [g_lib newFunctionWithName:@"fs_vert"];
+   rp.fragmentFunction = [g_lib newFunctionWithName:@"pass_chain_frag"];
+   rp.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
+   st.pipe = [g_dev newRenderPipelineStateWithDescriptor:rp error:&merr];
+   if (!st.pipe) gb_die("pass_chain pipe failed: %s", merr.localizedDescription.UTF8String);
+
+   if (kind == 3u)
+      st.visBuf = [g_dev newBufferWithLength:(size_t)st.passes * 8u options:MTLResourceStorageModePrivate];
+
+   size_t npix = (size_t)w * h;
+   uint16_t *ref = malloc(npix * 8u);
+   uint16_t rgb_h = pc_f32_to_f16_m((float)st.passes / 64.0f);
+   for (size_t i = 0; i < npix; i++) {
+      ref[i * 4u + 0u] = rgb_h;
+      ref[i * 4u + 1u] = rgb_h;
+      ref[i * 4u + 2u] = rgb_h;
+      ref[i * 4u + 3u] = 0x3c00u;
+   }
+   st.refCrc = gb_crc32(ref, npix * 8u);
+   free(ref);
+   return st;
+}
+
+static void
+pass_chain_encode(id state, id<MTLCommandBuffer> cb, uint64_t k)
+{
+   (void)k;
+   GBPassChainState *st = state;
+   bool indep = (st.kind == 2u);
+   bool oq = (st.kind == 3u);
+   for (uint32_t pass = 0; pass < st.passes; pass++) {
+      id<MTLTexture> dst = indep ? st.imgs[pass] : st.imgs[pass & 1u];
+      id<MTLTexture> src = (indep || pass == 0u) ? st.initTex : st.imgs[(pass - 1u) & 1u];
+      MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+      rp.colorAttachments[0].texture = dst;
+      rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+      rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+      if (oq)
+         rp.visibilityResultBuffer = st.visBuf;
+      id<MTLRenderCommandEncoder> e = [cb renderCommandEncoderWithDescriptor:rp];
+      [e setRenderPipelineState:st.pipe];
+      [e setFragmentTexture:src atIndex:0];
+      [e setFragmentSamplerState:st.nearSampler atIndex:0];
+      float pc[4] = {1.0f / (float)st.w, 1.0f / (float)st.h,
+                     1.0f, indep ? ((float)(pass + 1u) / 64.0f) : (1.0f / 64.0f)};
+      [e setFragmentBytes:pc length:sizeof(pc) atIndex:0];
+      if (oq)
+         [e setVisibilityResultMode:MTLVisibilityResultModeBoolean offset:(NSUInteger)pass * 8u];
+      [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+      if (oq)
+         [e setVisibilityResultMode:MTLVisibilityResultModeDisabled offset:0];
+      [e endEncoding];
+   }
+}
+
+static void
+pass_chain_derive(const struct gb_opts *o, struct gb_result *r, const struct gb_samples *us)
+{
+   long passes = gb_param_int(o, "passes", 14);
+   gb_derive_rate(r, "kpass_s", "kpass/s", us, (double)passes * 1e3);
+   struct gb_samples upp = {0};
+   for (size_t i = 0; i < us->n; i++)
+      gb_samples_push(&upp, us->v[i] / (double)passes);
+   gb_result_metric(r, "us_per_pass", "us", true, &upp, false);
+   gb_samples_free(&upp);
+}
+
+static void
+pass_chain_check(id state, struct gb_check *chk)
+{
+   GBPassChainState *st = state;
+   id<MTLTexture> finalTex = (st.kind == 2u) ? st.imgs[st.passes - 1u] : st.imgs[(st.passes - 1u) & 1u];
+   size_t bytes = (size_t)st.w * st.h * 8u;
+   uint8_t *got = malloc(bytes);
+   mtl_tex_readback(finalTex, got, st.w, st.h, 8u);
+   mtl_set_crc_check(chk, gb_crc32(got, bytes), st.refCrc);
+   free(got);
+}
+
+static const char *const pass_chain_params[] = {"kind", "passes", "res", NULL};
+static const struct mtest t_render_pass_chain = {
+   .name = "render.pass_chain", .known = pass_chain_params, .depths = {1, 4}, .nd = 2,
+   .setup = pass_chain_setup, .encode = pass_chain_encode, .derive = pass_chain_derive, .check = pass_chain_check,
+};
+
 /* ======================= table ======================= */
 
 static int st_empty(const struct gb_opts *o) { return run_stream_test(o, &t_submit_empty); }
@@ -3974,6 +4153,7 @@ static int st_bubo(const struct gb_opts *o) { return run_stream_test(o, &t_rende
 static int st_fp16(const struct gb_opts *o) { return run_stream_test(o, &t_compute_fp16); }
 static int st_xfer(const struct gb_opts *o) { return run_stream_test(o, &t_transfer_ops); }
 static int st_postfx(const struct gb_opts *o) { return run_stream_test(o, &t_render_postfx); }
+static int st_pass_chain(const struct gb_opts *o) { return run_stream_test(o, &t_render_pass_chain); }
 
 static const struct {
    const char *name;
@@ -4011,6 +4191,7 @@ static const struct {
    {"compute.fp16", st_fp16},
    {"transfer.ops", st_xfer},
    {"render.postfx", st_postfx},
+   {"render.pass_chain", st_pass_chain},
    {NULL, NULL},
 };
 

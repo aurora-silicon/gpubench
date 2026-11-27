@@ -41,3 +41,20 @@ vertex float4 tvb_vert(uint vid [[vertex_id]])
    if (c == 2u) p = float2(1.0f, y + 2.0f / 1080.0f);
    return float4(p, 0.0f, 1.0f);
 }
+
+// Fullscreen affine texture step for render.pass_chain.
+struct PassChainPC {
+   float2 inv_size;
+   float scale;
+   float bias;
+};
+
+fragment float4 pass_chain_frag(float4 pos [[position]],
+                                texture2d<float> tex [[texture(0)]],
+                                sampler samp [[sampler(0)]],
+                                constant PassChainPC &pc [[buffer(0)]])
+{
+   float2 uv = pos.xy * pc.inv_size;
+   float4 s = tex.sample(samp, uv, level(0.0f));
+   return float4(s.rgb * pc.scale + pc.bias, 1.0f);
+}

@@ -37,6 +37,7 @@ int gb_run_compute_corner_ring(const struct gb_opts *o);
 int gb_run_compute_desc_search(const struct gb_opts *o);
 int gb_run_compute_chain(const struct gb_opts *o);
 int gb_run_render_msaa_merge(const struct gb_opts *o);
+int gb_run_render_pass_chain(const struct gb_opts *o);
 
 /* Queue rebind & context-churn Vulkan benchmarks (tests_rebind.c). */
 int gb_run_queue_rebind(const struct gb_opts *o);

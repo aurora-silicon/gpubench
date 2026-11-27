@@ -30,3 +30,12 @@ w3-msaa      suite  render.msaa_merge    --depths 1,4 --param samples=2 --param 
 w3-msaa      suite  render.msaa_merge    --depths 1,4 --param samples=4 --param fmt=rgba8 --param passes=4 --param res=1080p
 w3-msaa      suite  render.msaa_merge    --depths 1,4 --param samples=4 --param fmt=rgba16f --param passes=4 --param res=1080p
 w3-msaa      suite  render.msaa_merge    --depths 1,4 --param samples=4 --param fmt=rgba8 --param passes=4 --param res=1440p
+
+# 6. Multi-pass small/mid RGBA16F render pass chains (barrier narrowing, mid-submit publish, OQ stamps)
+w3-rchain    suite  render.pass_chain    --depths 1,4 --param kind=all_bar --param passes=14 --param res=tiny
+w3-rchain    suite  render.pass_chain    --depths 1,4 --param kind=frag_bar --param passes=14 --param res=tiny
+w3-rchain    suite  render.pass_chain    --depths 1,4 --param kind=indep --param passes=14 --param res=tiny
+w3-rchain    suite  render.pass_chain    --depths 1,4 --param kind=oq_bar --param passes=14 --param res=tiny
+w3-rchain    suite  render.pass_chain    --depths 1,4 --param kind=all_bar --param passes=14 --param res=half
+w3-rchain    suite  render.pass_chain    --depths 1,4 --param kind=frag_bar --param passes=14 --param res=half
+w3-rchain    suite  render.pass_chain    --depths 1,4 --param kind=indep --param passes=14 --param res=half

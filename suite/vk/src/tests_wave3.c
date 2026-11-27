@@ -1200,3 +1200,447 @@ static const struct gb_stream_test t_render_msaa_merge = {
 };
 
 int gb_run_render_msaa_merge(const struct gb_opts *o) { return gb_run_stream_test(o, &t_render_msaa_merge); }
+
+/* =========================================================================
+ * 6. render.pass_chain (multi-pass RGBA16F render chains: barrier narrowing,
+ *    independent mid-submit publication, and per-pass occlusion queries)
+ * ========================================================================= */
+
+enum pass_chain_kind {
+   PC_ALL_BAR = 0,
+   PC_FRAG_BAR = 1,
+   PC_INDEP = 2,
+   PC_OQ_BAR = 3,
+};
+
+struct pass_chain_state {
+   enum pass_chain_kind kind;
+   uint32_t w, h, passes;
+   uint32_t nimgs;
+   struct gb_img init_img;
+   struct gb_img *imgs;
+   VkSampler sampler;
+   VkDescriptorSetLayout dsl;
+   VkDescriptorPool dpool;
+   VkDescriptorSet set_init, set_0, set_1;
+   VkPipelineLayout layout;
+   VkPipeline pipe;
+   VkQueryPool oq_pool;
+   uint16_t *ref;
+   uint32_t ref_crc;
+};
+
+static bool
+parse_pass_chain_res(const char *s, uint32_t *w, uint32_t *h)
+{
+   if (!strcmp(s, "tiny")) *w = 60, *h = 33;
+   else if (!strcmp(s, "small")) *w = 320, *h = 180;
+   else if (!strcmp(s, "half")) *w = 960, *h = 540;
+   else if (!strcmp(s, "1080p")) *w = 1920, *h = 1080;
+   else return false;
+   return true;
+}
+
+static uint16_t
+pc_f32_to_f16(float f)
+{
+   uint32_t u;
+   memcpy(&u, &f, sizeof(u));
+   uint32_t sign = (u >> 16) & 0x8000u;
+   int32_t exp = (int32_t)((u >> 23) & 0xffu) - 127 + 15;
+   uint32_t mant = (u >> 13) & 0x3ffu;
+   if (exp <= 0)
+      return (uint16_t)sign;
+   if (exp >= 31)
+      return (uint16_t)(sign | 0x7c00u);
+   return (uint16_t)(sign | ((uint32_t)exp << 10) | mant);
+}
+
+static void
+pc_write_img_set(struct gb_vk *vk, VkDescriptorSet set, VkSampler sampler, VkImageView view)
+{
+   VkDescriptorImageInfo ii = {
+      .sampler = sampler,
+      .imageView = view,
+      .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+   };
+   VkWriteDescriptorSet wr = {
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+      .dstSet = set,
+      .dstBinding = 0,
+      .descriptorCount = 1,
+      .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+      .pImageInfo = &ii,
+   };
+   vkUpdateDescriptorSets(vk->dev, 1, &wr, 0, NULL);
+}
+
+static void *
+pass_chain_setup(struct gb_vk *vk, const struct gb_opts *o, char *err, size_t n)
+{
+   const char *kind_s = gb_param(o, "kind", "all_bar");
+   enum pass_chain_kind kind;
+   if (!strcmp(kind_s, "all_bar")) kind = PC_ALL_BAR;
+   else if (!strcmp(kind_s, "frag_bar")) kind = PC_FRAG_BAR;
+   else if (!strcmp(kind_s, "indep")) kind = PC_INDEP;
+   else if (!strcmp(kind_s, "oq_bar")) kind = PC_OQ_BAR;
+   else {
+      snprintf(err, n, "kind must be all_bar, frag_bar, indep or oq_bar");
+      return NULL;
+   }
+   uint32_t w = 0, h = 0;
+   if (!parse_pass_chain_res(gb_param(o, "res", "tiny"), &w, &h)) {
+      snprintf(err, n, "res must be tiny, small, half or 1080p");
+      return NULL;
+   }
+   long passes = gb_param_int(o, "passes", 14);
+   if (passes < 2 || passes > 64) {
+      snprintf(err, n, "passes must be 2..64");
+      return NULL;
+   }
+
+   struct pass_chain_state *st = calloc(1, sizeof(*st));
+   st->kind = kind;
+   st->w = w;
+   st->h = h;
+   st->passes = (uint32_t)passes;
+   st->nimgs = (kind == PC_INDEP) ? st->passes : 2u;
+   st->imgs = calloc(st->nimgs, sizeof(*st->imgs));
+
+   VkFormat fmt = VK_FORMAT_R16G16B16A16_SFLOAT;
+   gb_img_create(vk, w, h, fmt,
+                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &st->init_img);
+   for (uint32_t i = 0; i < st->nimgs; i++) {
+      VkImageUsageFlags u = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      if (kind != PC_INDEP)
+         u |= VK_IMAGE_USAGE_SAMPLED_BIT;
+      gb_img_create(vk, w, h, fmt, u, &st->imgs[i]);
+   }
+
+   /* Clear init_img to (0, 0, 0, 1) and transition initial layouts. */
+   VkCommandBuffer cb = gb_oneshot_begin(vk);
+   gb_img_barrier(cb, st->init_img.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                  VK_PIPELINE_STAGE_2_NONE, 0,
+                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+   const float zero[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+   gb_begin_render(cb, &st->init_img, zero);
+   vkCmdEndRendering(cb);
+   gb_img_barrier(cb, st->init_img.img, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+   for (uint32_t i = 0; i < st->nimgs; i++) {
+      gb_img_barrier(cb, st->imgs[i].img, VK_IMAGE_LAYOUT_UNDEFINED,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_NONE, 0,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+   }
+   gb_oneshot_end(vk, cb);
+
+   VkSamplerCreateInfo sci = {
+      .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+      .magFilter = VK_FILTER_NEAREST,
+      .minFilter = VK_FILTER_NEAREST,
+      .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+      .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+      .maxLod = 0.0f,
+   };
+   GB_VK_CHECK(vkCreateSampler(vk->dev, &sci, NULL, &st->sampler));
+
+   VkDescriptorSetLayoutBinding bind = {
+      .binding = 0,
+      .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+      .descriptorCount = 1,
+      .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+   };
+   VkDescriptorSetLayoutCreateInfo dci = {
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+      .bindingCount = 1,
+      .pBindings = &bind,
+   };
+   GB_VK_CHECK(vkCreateDescriptorSetLayout(vk->dev, &dci, NULL, &st->dsl));
+
+   uint32_t nsets = (kind == PC_INDEP) ? 1u : 3u;
+   VkDescriptorPoolSize dps = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nsets};
+   VkDescriptorPoolCreateInfo dpci = {
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+      .maxSets = nsets,
+      .poolSizeCount = 1,
+      .pPoolSizes = &dps,
+   };
+   GB_VK_CHECK(vkCreateDescriptorPool(vk->dev, &dpci, NULL, &st->dpool));
+
+   VkDescriptorSetLayout dsls[3] = {st->dsl, st->dsl, st->dsl};
+   VkDescriptorSet sets[3] = {0};
+   VkDescriptorSetAllocateInfo dsai = {
+      .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+      .descriptorPool = st->dpool,
+      .descriptorSetCount = nsets,
+      .pSetLayouts = dsls,
+   };
+   GB_VK_CHECK(vkAllocateDescriptorSets(vk->dev, &dsai, sets));
+   st->set_init = sets[0];
+   pc_write_img_set(vk, st->set_init, st->sampler, st->init_img.view);
+   if (kind != PC_INDEP) {
+      st->set_0 = sets[1];
+      st->set_1 = sets[2];
+      pc_write_img_set(vk, st->set_0, st->sampler, st->imgs[0].view);
+      pc_write_img_set(vk, st->set_1, st->sampler, st->imgs[1].view);
+   }
+
+   VkPushConstantRange pr = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16};
+   VkPipelineLayoutCreateInfo lci = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+      .setLayoutCount = 1,
+      .pSetLayouts = &st->dsl,
+      .pushConstantRangeCount = 1,
+      .pPushConstantRanges = &pr,
+   };
+   GB_VK_CHECK(vkCreatePipelineLayout(vk->dev, &lci, NULL, &st->layout));
+
+   VkShaderModule mv = gb_shader(vk, GB_SPV(fs_vert));
+   VkShaderModule mf = gb_shader(vk, GB_SPV(pass_chain_frag));
+   VkPipelineShaderStageCreateInfo stages[2] = {
+      {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+       .stage = VK_SHADER_STAGE_VERTEX_BIT, .module = mv, .pName = "main"},
+      {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+       .stage = VK_SHADER_STAGE_FRAGMENT_BIT, .module = mf, .pName = "main"},
+   };
+   VkPipelineVertexInputStateCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+   VkPipelineInputAssemblyStateCreateInfo ia = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+      .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+   };
+   VkPipelineViewportStateCreateInfo vp = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+      .viewportCount = 1, .scissorCount = 1,
+   };
+   VkPipelineRasterizationStateCreateInfo rs = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+      .polygonMode = VK_POLYGON_MODE_FILL, .cullMode = VK_CULL_MODE_NONE,
+      .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE, .lineWidth = 1.0f,
+   };
+   VkPipelineMultisampleStateCreateInfo ms = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+      .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+   };
+   VkPipelineColorBlendAttachmentState cba = {.colorWriteMask = 0xf};
+   VkPipelineColorBlendStateCreateInfo cbs = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+      .attachmentCount = 1, .pAttachments = &cba,
+   };
+   VkDynamicState dyn[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+   VkPipelineDynamicStateCreateInfo dyns = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+      .dynamicStateCount = 2, .pDynamicStates = dyn,
+   };
+   VkPipelineRenderingCreateInfo ri = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+      .colorAttachmentCount = 1, .pColorAttachmentFormats = &fmt,
+   };
+   VkGraphicsPipelineCreateInfo gci = {
+      .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .pNext = &ri,
+      .stageCount = 2, .pStages = stages,
+      .pVertexInputState = &vi, .pInputAssemblyState = &ia,
+      .pViewportState = &vp, .pRasterizationState = &rs,
+      .pMultisampleState = &ms, .pColorBlendState = &cbs, .pDynamicState = &dyns,
+      .layout = st->layout,
+   };
+   GB_VK_CHECK(vkCreateGraphicsPipelines(vk->dev, VK_NULL_HANDLE, 1, &gci, NULL, &st->pipe));
+   vkDestroyShaderModule(vk->dev, mv, NULL);
+   vkDestroyShaderModule(vk->dev, mf, NULL);
+
+   if (kind == PC_OQ_BAR) {
+      VkQueryPoolCreateInfo qci = {
+         .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+         .queryType = VK_QUERY_TYPE_OCCLUSION,
+         .queryCount = st->passes,
+      };
+      GB_VK_CHECK(vkCreateQueryPool(vk->dev, &qci, NULL, &st->oq_pool));
+   }
+
+   /* Exact dyadic FP16 oracle: passes / 64.0 in RGB, 1.0 in A. */
+   size_t npix = (size_t)w * h;
+   st->ref = malloc(npix * 4u * sizeof(uint16_t));
+   uint16_t rgb_h = pc_f32_to_f16((float)st->passes / 64.0f);
+   uint16_t one_h = 0x3c00u;
+   for (size_t i = 0; i < npix; i++) {
+      st->ref[i * 4u + 0u] = rgb_h;
+      st->ref[i * 4u + 1u] = rgb_h;
+      st->ref[i * 4u + 2u] = rgb_h;
+      st->ref[i * 4u + 3u] = one_h;
+   }
+   st->ref_crc = gb_crc32(st->ref, npix * 8u);
+   return st;
+}
+
+static void
+pass_chain_teardown(struct gb_vk *vk, void *p)
+{
+   struct pass_chain_state *st = p;
+   if (st->oq_pool)
+      vkDestroyQueryPool(vk->dev, st->oq_pool, NULL);
+   vkDestroyPipeline(vk->dev, st->pipe, NULL);
+   vkDestroyPipelineLayout(vk->dev, st->layout, NULL);
+   vkDestroyDescriptorPool(vk->dev, st->dpool, NULL);
+   vkDestroyDescriptorSetLayout(vk->dev, st->dsl, NULL);
+   vkDestroySampler(vk->dev, st->sampler, NULL);
+   for (uint32_t i = 0; i < st->nimgs; i++)
+      gb_img_destroy(vk, &st->imgs[i]);
+   free(st->imgs);
+   gb_img_destroy(vk, &st->init_img);
+   free(st->ref);
+   free(st);
+}
+
+static void
+pass_chain_record(void *p, VkCommandBuffer cb, uint64_t k)
+{
+   (void)k;
+   struct pass_chain_state *st = p;
+   VkViewport vp = {0, 0, (float)st->w, (float)st->h, 0.0f, 1.0f};
+   VkRect2D sc = {{0, 0}, {st->w, st->h}};
+   bool all_bar = (st->kind == PC_ALL_BAR);
+   bool indep = (st->kind == PC_INDEP);
+   bool oq = (st->kind == PC_OQ_BAR);
+
+   if (oq)
+      vkCmdResetQueryPool(cb, st->oq_pool, 0, st->passes);
+
+   for (uint32_t pass = 0; pass < st->passes; pass++) {
+      const struct gb_img *dst = indep ? &st->imgs[pass] : &st->imgs[pass & 1u];
+      if (!indep) {
+         if (pass == 0u) {
+            gb_img_barrier(cb, dst->img,
+                           VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                           all_bar ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+                                   : (VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT),
+                           all_bar ? (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT)
+                                   : (VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+                                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT),
+                           all_bar ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT : VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                           all_bar ? (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT)
+                                   : VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+         } else {
+            const struct gb_img *prev = &st->imgs[(pass - 1u) & 1u];
+            VkImageMemoryBarrier2 bs[2] = {
+               {
+                  .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                  .srcStageMask = all_bar ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+                                          : VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                  .srcAccessMask = all_bar ? (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT)
+                                           : VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                  .dstStageMask = all_bar ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+                                          : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                  .dstAccessMask = all_bar ? (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT)
+                                           : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                  .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                  .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                  .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                  .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                  .image = prev->img,
+                  .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+               },
+               {
+                  .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                  .srcStageMask = all_bar ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+                                          : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                  .srcAccessMask = all_bar ? (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT)
+                                           : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                  .dstStageMask = all_bar ? VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT
+                                          : VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                  .dstAccessMask = all_bar ? (VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT)
+                                           : VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                  .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                  .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                  .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                  .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                  .image = dst->img,
+                  .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+               },
+            };
+            VkDependencyInfo di = {
+               .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+               .imageMemoryBarrierCount = 2,
+               .pImageMemoryBarriers = bs,
+            };
+            vkCmdPipelineBarrier2(cb, &di);
+         }
+      }
+
+      VkRenderingAttachmentInfo ca = {
+         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+         .imageView = dst->view,
+         .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+         .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+      };
+      VkRenderingInfo ri = {
+         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+         .renderArea = {{0, 0}, {st->w, st->h}},
+         .layerCount = 1,
+         .colorAttachmentCount = 1,
+         .pColorAttachments = &ca,
+      };
+      vkCmdBeginRendering(cb, &ri);
+      vkCmdSetViewport(cb, 0, 1, &vp);
+      vkCmdSetScissor(cb, 0, 1, &sc);
+      vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, st->pipe);
+      VkDescriptorSet set = (indep || pass == 0u) ? st->set_init : ((pass & 1u) ? st->set_0 : st->set_1);
+      vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, st->layout, 0, 1, &set, 0, NULL);
+      struct { float iw, ih, scale, bias; } pc = {
+         1.0f / (float)st->w, 1.0f / (float)st->h,
+         1.0f, indep ? ((float)(pass + 1u) / 64.0f) : (1.0f / 64.0f),
+      };
+      vkCmdPushConstants(cb, st->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+      if (oq)
+         vkCmdBeginQuery(cb, st->oq_pool, pass, 0);
+      vkCmdDraw(cb, 3, 1, 0, 0);
+      if (oq)
+         vkCmdEndQuery(cb, st->oq_pool, pass);
+      vkCmdEndRendering(cb);
+   }
+}
+
+static void
+pass_chain_derive(const struct gb_opts *o, struct gb_result *r, const struct gb_samples *us)
+{
+   long passes = gb_param_int(o, "passes", 14);
+   gb_derive_rate(r, "kpass_s", "kpass/s", us, (double)passes * 1e3);
+   struct gb_samples upp = {0};
+   for (size_t i = 0; i < us->n; i++)
+      gb_samples_push(&upp, us->v[i] / (double)passes);
+   gb_result_metric(r, "us_per_pass", "us", true, &upp, false);
+   gb_samples_free(&upp);
+}
+
+static void
+pass_chain_check(struct gb_vk *vk, void *p, struct gb_check *chk)
+{
+   struct pass_chain_state *st = p;
+   const struct gb_img *final_img =
+      (st->kind == PC_INDEP) ? &st->imgs[st->passes - 1u] : &st->imgs[(st->passes - 1u) & 1u];
+   size_t bytes = (size_t)st->w * st->h * 8u;
+   uint32_t *got = malloc(bytes);
+   gb_img_readback(vk, final_img, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, got, 8u);
+   gb_check_words(chk, got, (const uint32_t *)st->ref, st->ref_crc, bytes / sizeof(uint32_t));
+   free(got);
+}
+
+static const char *const pass_chain_params[] = {"kind", "passes", "res", NULL};
+static const struct gb_stream_test t_render_pass_chain = {
+   .name = "render.pass_chain",
+   .known_params = pass_chain_params,
+   .default_depths = {1, 4}, .ndefault = 2,
+   .setup = pass_chain_setup,
+   .teardown = pass_chain_teardown,
+   .record = pass_chain_record,
+   .derive = pass_chain_derive,
+   .check = pass_chain_check,
+};
+
+int gb_run_render_pass_chain(const struct gb_opts *o) { return gb_run_stream_test(o, &t_render_pass_chain); }
