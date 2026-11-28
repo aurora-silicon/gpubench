@@ -72,6 +72,47 @@ def test_suite_runner_can_use_a_literal_plan_with_metacharacters(tmp_path):
     assert result.stdout.strip() == f"{executor} --test literal"
 
 
+def test_suite_runner_preserves_executor_failures(tmp_path):
+    plan = tmp_path / "plan.txt"
+    plan.write_text(
+        "quick suite early\nquick suite reported\nquick suite interrupted\nquick suite next\n"
+    )
+    executor = tmp_path / "gpubench-vk"
+    executor.write_text(
+        "#!/bin/sh\n"
+        "case \"$2\" in\n"
+        "  early) echo 'setup failed' >&2; exit 2 ;;\n"
+        "  reported) echo '{\"test\":\"reported\",\"status\":\"fail\"}'; exit 1 ;;\n"
+        "  interrupted) printf '%s\\n' '{\"test\":\"completed\",\"status\":\"ok\"}'; "
+        "printf '%s' '{\"test\":\"broken'; kill -KILL \"$$\" ;;\n"
+        "  next) echo '{\"test\":\"next\",\"status\":\"ok\"}' ;;\n"
+        "esac\n"
+    )
+    executor.chmod(0o755)
+    out = tmp_path / "records"
+
+    subprocess.run(
+        [
+            "bash", str(TOOLS / "run-suite.sh"), "--api", "vk", "--bin", str(tmp_path),
+            "--out", str(out), "--plans", str(plan),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    rows = [json.loads(line) for line in (out / "results.jsonl").read_text().splitlines()]
+    assert [(row["test"], row["status"]) for row in rows] == [
+        ("early", "fail"), ("reported", "fail"), ("completed", "ok"),
+        ("interrupted", "fail"), ("next", "ok"),
+    ]
+    assert "code 2" in rows[0]["error"]
+    assert "code 137" in rows[3]["error"]
+    assert "setup failed" in (out / "log.txt").read_text()
+    assert not list(out.glob(".executor.*"))
+
+
 @pytest.mark.parametrize("runner, api", [("run-linux.sh", "vk"), ("run-macos.sh", "mtl")])
 def test_record_runner_executes_and_records_literal_plans(tmp_path, runner, api):
     plan = tmp_path / "plan[1].txt"
