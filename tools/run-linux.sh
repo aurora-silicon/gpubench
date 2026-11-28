@@ -79,7 +79,7 @@ state_json() {
   printf '},"loadavg":%s}' "$(jstr "$(cat /proc/loadavg)")"
 }
 
-module_json() { # the GPU kernel module: aurora, or asahi on kernels before the rename
+module_json() { # the GPU kernel module: aurora (LEGACY-ASAHI(2027-02-28): asahi on kernels before the rename)
   local m=/sys/module/aurora f bid="" first=1
   [ -d "$m" ] || m=/sys/module/asahi
   [ -d "$m" ] || { printf null; return; }
@@ -95,7 +95,7 @@ module_json() { # the GPU kernel module: aurora, or asahi on kernels before the 
   printf '}}'
 }
 
-gpu_log() { # kernel log lines since the run started that point at GPU trouble
+gpu_log() { # kernel log lines since the run started that point at GPU trouble (LEGACY-ASAHI(2027-02-28): asahi = pre-rename kernels)
   journalctl -k --since "@$T0" --no-pager -q 2>/dev/null |
     grep -iE 'aurora|asahi|agx|drm' | grep -iE 'GPU fault|page fault|crashed|runtime stopped|client failed|timed out|timeout|still draining|queued-failure|hang|recover' || true
 }

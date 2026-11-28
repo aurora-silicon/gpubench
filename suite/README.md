@@ -1,7 +1,7 @@
 # gpubench standard suite
 
-A small, fixed set of GPU benchmarks for the Linux driver stack (Mesa hk, the
-drm/asahi kernel driver and the GPU firmware interface), each with a Vulkan
+A small, fixed set of GPU benchmarks for the Linux driver stack (Borealis in Mesa, the
+drm/aurora kernel driver and the GPU firmware interface), each with a Vulkan
 executor (Linux) and a Metal executor (macOS) that do the same work with the
 same dimensions and the same timing method.
 
@@ -48,7 +48,7 @@ at the same N.
   the CPU waits for value k-N. Metal: one `MTLCommandQueue`; before committing
   command buffer k the CPU calls `waitUntilCompleted` on command buffer k-N.
 - `mode=queues` (N = 2, 4, 8): N queues in one process, one thread per queue,
-  each with 1 submission in flight. Vulkan: N `VkQueue`s of the family (hk
+  each with 1 submission in flight. Vulkan: N `VkQueue`s of the family (Borealis
   gives each its own kernel queue and firmware context); Metal: N
   `MTLCommandQueue`s. Skipped when the device has fewer queues than N.
 - `mode=procs` (N = 2, 4, 8, 16): N processes, each with one queue and 1
@@ -90,7 +90,7 @@ references, encode, commit), because Metal has no reusable command buffers.
   - `gpu_gap_us`: start of submission k - end of k-1 on the same queue (GPU
     idle between back-to-back submissions; meaningful at depth >= 2). A
     negative value means the start stamp was written before k-1 finished.
-  - `us_per_submit_timed`: wall-clock rate during the timed pass. On hk
+  - `us_per_submit_timed`: wall-clock rate during the timed pass. On Borealis
     timestamps ride on command retirement, so the difference from
     `us_per_submit` is itself a measured cost.
 - Percentiles: `median`, `p5` and `p95` are taken over the per-window values
@@ -110,18 +110,18 @@ references, encode, commit), because Metal has no reusable command buffers.
     stage-boundary counter sampling (`MTLCounterSampleBuffer`) on Metal.
   - The timed pass of every other test uses command-buffer start/end
     timestamps on Vulkan, and `GPUStartTime`/`GPUEndTime` on Metal.
-  - Stock Mesa 26.2 hk on G14 does not bracket a compute dispatch with
+  - Stock Mesa 26.2 Vulkan on G14 does not bracket a compute dispatch with
     start/end timestamps (`gpu_us` stays around 24 us whatever the work);
     the tip tree does. Check that `gpu_us` tracks the work before trusting it.
 - **Occlusion:** a non-precise occlusion query on Vulkan; the boolean
   visibility result mode on Metal.
 - **Fills:** both backends write repeated `0x3f` bytes. Vulkan uses the
   32-bit pattern `0x3f3f3f3f` to match Metal's byte-valued `fillBuffer`.
-- **Copies and fills:** both are driver-internal operations (hk uses meta
+- **Copies and fills:** both are driver-internal operations (Borealis uses meta
   compute kernels), so `copy.bw` measures the driver's selected implementation,
   including internal shader codegen.
 - **Empty submissions:** `submit.empty` measures what the API does with an
-  empty command buffer. hk completes it in userspace without a kernel job
+  empty command buffer. Borealis completes it in userspace without a kernel job
   (about 1 us round trip on the host). Use `compute.light` for the cheapest
   submission that reaches the kernel and firmware.
 - **Latency at depth N:** `latency_us` at depth N includes about N - 1

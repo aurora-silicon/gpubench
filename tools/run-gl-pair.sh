@@ -7,7 +7,7 @@ exe=${GB_GL_BIN:-build/bin/gpubench-gl}
 mkdir "$out"
 gles=
 if [ "${GB_GL_GLES:-0}" = 1 ]; then gles=--gles; fi
-for driver in asahi zink; do
+for driver in aurora zink; do
     dir=$out/$driver
     mkdir "$dir"
     export MESA_LOADER_DRIVER_OVERRIDE=$driver

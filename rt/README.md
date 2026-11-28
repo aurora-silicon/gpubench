@@ -150,7 +150,7 @@ The standalone plan and record helpers are also available under `rt/tools/`. Set
 
 ## Notes on the implementations
 
-- hk (Mesa tip `bfb73507d0`) on G17P lowers ray queries to the native Gen1 traversal
+- Borealis (Mesa tip `bfb73507d0`) on G17P lowers ray queries to the native Gen1 traversal
   (`agx_nir_lower_gen1_ray_query`, SCS-staged hardware traversal) and builds native-layout
   acceleration structures (`bvh/agx3_*.comp`); see `FAIRNESS.md`.
 - Metal has no ray-tracing pipeline, so `trace=pipeline` is Vulkan only (Metal prints a skip).
