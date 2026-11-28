@@ -813,13 +813,23 @@ child_pipe(int fds[2])
    if (pipe(fds) < 0)
       return -1;
 
-   if (fcntl(fds[0], F_SETFD, FD_CLOEXEC) < 0 ||
-       fcntl(fds[1], F_SETFD, FD_CLOEXEC) < 0) {
-      close(fds[0]);
-      close(fds[1]);
-      return -1;
+   for (int i = 0; i < 2; ++i) {
+      if (fds[i] <= STDERR_FILENO) {
+         int fd = fcntl(fds[i], F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+         if (fd < 0)
+            goto fail;
+         close(fds[i]);
+         fds[i] = fd;
+      } else if (fcntl(fds[i], F_SETFD, FD_CLOEXEC) < 0) {
+         goto fail;
+      }
    }
    return 0;
+
+fail:
+   close(fds[0]);
+   close(fds[1]);
+   return -1;
 }
 
 int
@@ -849,14 +859,16 @@ gb_spawn_children(const struct gb_opts *o, int n, struct gb_child *out)
          goto done;
       }
       posix_spawn_file_actions_t fa;
-      posix_spawn_file_actions_init(&fa);
-      posix_spawn_file_actions_adddup2(&fa, to[0], 0);
-      posix_spawn_file_actions_adddup2(&fa, from[1], 1);
-      posix_spawn_file_actions_addclose(&fa, to[1]);
-      posix_spawn_file_actions_addclose(&fa, from[0]);
       pid_t pid;
-      int rc = posix_spawn(&pid, exe, &fa, NULL, argv, environ);
-      posix_spawn_file_actions_destroy(&fa);
+      int rc = posix_spawn_file_actions_init(&fa);
+      if (!rc) {
+         rc = posix_spawn_file_actions_adddup2(&fa, to[0], STDIN_FILENO);
+         if (!rc)
+            rc = posix_spawn_file_actions_adddup2(&fa, from[1], STDOUT_FILENO);
+         if (!rc)
+            rc = posix_spawn(&pid, exe, &fa, NULL, argv, environ);
+         posix_spawn_file_actions_destroy(&fa);
+      }
       close(to[0]);
       close(from[1]);
       if (rc) {

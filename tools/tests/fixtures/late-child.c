@@ -1,8 +1,31 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "gb_common.h"
+#include <errno.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+static int action_fails(const char *action)
+{
+   const char *failure = getenv("GB_CHILD_TEST_FAIL_ACTION");
+   return failure && !strcmp(failure, action);
+}
+
+int fixture_actions_init(posix_spawn_file_actions_t *actions)
+{
+   if (action_fails("init"))
+      return ENOMEM;
+   return posix_spawn_file_actions_init(actions);
+}
+
+int fixture_actions_dup2(posix_spawn_file_actions_t *actions, int from, int to)
+{
+   if (action_fails(to == STDIN_FILENO ? "stdin" : "stdout"))
+      return ENOMEM;
+   return posix_spawn_file_actions_adddup2(actions, from, to);
+}
 
 int main(int argc, char **argv)
 {
@@ -26,6 +49,10 @@ int main(int argc, char **argv)
       return 3;
    fputs("0\n", file);
    fclose(file);
+   if (getenv("GB_CHILD_TEST_CLOSE_STDIO")) {
+      close(STDIN_FILENO);
+      close(STDOUT_FILENO);
+   }
    struct gb_opts options = {.argc = argc, .argv = argv, .argv0 = argv[0]};
    struct gb_child children[3] = {0};
    if (gb_spawn_children(&options, 3, children) == 0)
@@ -35,5 +62,6 @@ int main(int argc, char **argv)
       if (children[i].pid && gb_child_reap(&children[i]) == 0)
          ++ready_exits;
    }
-   return ready_exits == 2 ? 0 : 5;
+   const int expected_exits = getenv("GB_CHILD_TEST_FAIL_ACTION") ? 0 : 2;
+   return ready_exits == expected_exits ? 0 : 5;
 }
