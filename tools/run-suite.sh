@@ -10,7 +10,8 @@
 # gpubench-<api>, any other lane X runs gpubench-X-<api>. Results go to
 # RECORD_DIR/results.jsonl, executor stderr to RECORD_DIR/log.txt, and one
 # progress line per plan line to stdout. Each plan line is killed after
-# GB_LINE_TIMEOUT seconds (default 300); a killed line is recorded as a fail.
+# GB_LINE_TIMEOUT seconds (default 300). A crash or a nonzero exit before
+# producing a result is recorded as a failure.
 set -u
 LIMIT=${GB_LINE_TIMEOUT:-300}
 API=""; BIN=""; OUT=""; CHUNKS=""; PLANS=""; TESTS=""; DRY=""
@@ -40,6 +41,8 @@ in_list() { # in_list item "a,b,c" (empty list = everything)
   return 1
 }
 n=0
+result_file=
+trap 'if [ -n "$result_file" ]; then rm -f -- "$result_file"; fi' EXIT
 # Split the list literally before the loop restores globbing for executor arguments.
 set -f
 for plan in $PLANS; do
@@ -62,19 +65,23 @@ for plan in $PLANS; do
     [ -n "${GB_RUNS:-}" ] && ctl="$ctl --runs $GB_RUNS"
     [ -n "${GB_RUN_MS:-}" ] && ctl="$ctl --run-ms $GB_RUN_MS"
     if [ -n "$DRY" ]; then echo "$exe --test $test $args$ctl"; continue; fi
+    if [ -z "$result_file" ]; then
+      result_file=$(mktemp "$OUT/.executor.XXXXXX") || exit 1
+    fi
     t0=$(date +%s)
     echo "### $(date +%T) $lane $test $args" >> "$OUT/log.txt"
     # shellcheck disable=SC2086
-    "$exe" --test "$test" $args $ctl >> "$OUT/results.jsonl" 2>> "$OUT/log.txt" < /dev/null &
+    "$exe" --test "$test" $args $ctl > "$result_file" 2>> "$OUT/log.txt" < /dev/null &
     pid=$!
     ( trap 'kill $sp 2>/dev/null; exit 0' TERM; sleep "$LIMIT" & sp=$!; wait $sp; kill -9 "$pid" 2>/dev/null ) &
     wd=$!
     wait "$pid"; rc=$?
     kill "$wd" 2>/dev/null; wait "$wd" 2>/dev/null
-    if [ "$rc" -ge 128 ]; then
-      printf '{"schema":"gpubench-result/1","lane":"%s","test":"%s","params":{},"mode":"queue","depth":0,"status":"fail","error":"executor killed or crashed (rc=%s) running: %s"}\n' \
-        "$lane" "$test" "$rc" "$args" >> "$OUT/results.jsonl"
+    if [ "$rc" -ge 128 ] || { [ "$rc" -ne 0 ] && [ ! -s "$result_file" ]; }; then
+      printf '{"schema":"gpubench-result/1","lane":"%s","test":"%s","params":{},"mode":"queue","depth":0,"status":"fail","error":"executor exited with code %s; see log.txt"}\n' \
+        "$lane" "$test" "$rc" >> "$result_file"
     fi
+    cat "$result_file" >> "$OUT/results.jsonl" || exit 1
     echo "$(date +%T) [$chunk] $lane $test $args: rc=$rc $(( $(date +%s) - t0 ))s"
   done < "$plan"
 done
