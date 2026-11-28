@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 FEED = Path(__file__).parent / "site/data/benchmarks.json"
-APIS = {"vulkan", "metal", "gl-native", "gl-zink"}
+APIS = {"vulkan", "metal", "gl-native", "gl-zink", "d3d11", "d3d12"}
 METRIC_FIELDS = ("unit", "better", "median", "p5", "p95", "n")
 
 

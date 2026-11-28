@@ -1,4 +1,4 @@
-import { buildComparisons, canCompare, compatible, geometricMeanRatio, metalPipelineUnsupported, relative, workloadKey } from "./comparison.js?v=7";
+import { buildComparisons, canCompare, compatible, geometricMeanRatio, metalPipelineUnsupported, relative, workloadKey } from "./comparison.js?v=8";
 import { BENCHMARK_GROUPS, benchmarkGroup, selectChartCases } from "./groups.js?v=8";
 
 const DEVICES = [
@@ -20,8 +20,17 @@ const APIS = [
   { id: "vulkan", name: "Vulkan", platform: "Linux" },
   { id: "gl-native", name: "OpenGL", platform: "Linux · native" },
   { id: "gl-zink", name: "OpenGL / Zink", platform: "Linux" },
+  { id: "d3d11", name: "Direct3D 11", platform: "Linux · DXVK" },
+  { id: "d3d12", name: "Direct3D 12", platform: "Linux · vkd3d-proton" },
   { id: "metal", name: "Metal", platform: "macOS" },
 ];
+const API_VIEWS = {
+  vulkan: ["Vulkan on Linux", "Borealis Vulkan compared with native Metal on the same Mac."],
+  "gl-native": ["OpenGL on Linux", "Native Gallium OpenGL compared with matching Metal workloads."],
+  "gl-zink": ["OpenGL on Linux", "Zink translates OpenGL to Vulkan. Compare matching workloads with Metal."],
+  d3d11: ["Direct3D 11 on Linux", "Measured with DXVK running over Borealis Vulkan."],
+  d3d12: ["Direct3D 12 on Linux", "Measured with vkd3d-proton running over Borealis Vulkan."],
+};
 const TEST_NAMES = {
   "submit.empty": "Empty submission",
   "compute.light": "Light compute",
@@ -67,11 +76,13 @@ const dateFormat = new Intl.DateTimeFormat("en", { dateStyle: "medium", timeZone
 const byId = (id) => document.getElementById(id);
 const theme = matchMedia("(prefers-color-scheme: dark)");
 const state = {
-  device: "neo", comparisonDevice: "all", runs: [], comparisons: [],
+  device: "neo", comparisonDevice: "all", api: "vulkan", runs: [], comparisons: [],
   hidden: new Set(), pinned: new Map(), openGroups: new Set(), plot: null, returnTarget: null,
 };
 const comparisonSearch = byId("comparison-search");
 const comparisonApi = byId("comparison-api");
+const comparisonDevice = byId("comparison-device");
+const apiNav = byId("api-nav");
 const comparisonResult = byId("comparison-result");
 const comparisonSort = byId("comparison-sort");
 const percent = new Intl.NumberFormat(undefined, { style: "percent", maximumFractionDigits: 1 });
@@ -134,8 +145,16 @@ function usableRows(rows) {
   return rows.filter((row) => row.status === "ok" && counts.get(row.depth) === 1);
 }
 
+function d3dView() {
+  return state.api === "d3d11" || state.api === "d3d12";
+}
+
+function viewApis() {
+  return APIS.filter(({ id }) => id === state.api || (!d3dView() && id === "metal"));
+}
+
 function recordsFor(key) {
-  return APIS.map((api) => {
+  return viewApis().map((api) => {
     const candidates = deviceRuns(api.id).map((run) => {
       const rows = run.rows.filter((row) => workloadKey(row) === key);
       return { run, rows, usable: usableRows(rows) };
@@ -148,35 +167,70 @@ function recordsFor(key) {
   });
 }
 
+function scopedEntries(device = state.comparisonDevice) {
+  return state.comparisons.filter((entry) =>
+    entry.api.id === state.api && (device === "all" || entry.device.id === device));
+}
+
 function defaultResult(device) {
-  const hasMatches = state.comparisons.some((entry) => entry.device.id === device && entry.ratio != null);
-  return device === "all" || hasMatches ? "matched" : "all";
+  return scopedEntries(device).some((entry) => entry.ratio != null) ? "matched" : "all";
+}
+
+function renderNavigation() {
+  const params = new URLSearchParams();
+  if (state.comparisonDevice !== "all") params.set("chip", state.comparisonDevice);
+  for (const link of apiNav.querySelectorAll("a")) {
+    const { api } = link.dataset;
+    params.set("api", api);
+    link.href = `?${params}`;
+    const active = api === state.api || (api === "gl-native" && state.api === "gl-zink");
+    if (active) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  byId("backend-filter").hidden = !state.api.startsWith("gl-");
+  if (!byId("backend-filter").hidden) comparisonApi.value = state.api;
+  const [title, description] = API_VIEWS[state.api];
+  byId("api-title").textContent = title;
+  byId("api-description").textContent = description;
+  byId("explorer").classList.toggle("raw-api", d3dView());
 }
 
 function renderDevices() {
-  const all = { id: "all", name: "All chips" };
-  byId("devices").replaceChildren(...[all, ...DEVICES].map((device) => {
-    const button = node("button", null, "device");
-    button.type = "button";
-    button.setAttribute("aria-pressed", String(device.id === state.comparisonDevice));
-    button.append(node("strong", device.name));
-    if (device.model) button.append(node("span", device.model));
-    button.addEventListener("click", () => {
-      if (state.comparisonDevice === device.id) return;
-      const usingDefault = comparisonResult.value === defaultResult(state.comparisonDevice);
-      state.comparisonDevice = device.id;
-      if (usingDefault) comparisonResult.value = defaultResult(device.id);
-      if (device.id !== "all") state.device = device.id;
-      state.hidden.clear();
-      state.pinned.clear();
-      renderDevices();
-      renderComparison();
-      renderWorkloads();
-      writeQuery();
-      byId("devices").querySelector('[aria-pressed="true"]').focus({ preventScroll: true });
-    });
-    return button;
-  }));
+  const available = new Set(scopedEntries("all").map(({ device }) => device.id));
+  comparisonDevice.replaceChildren(new Option("All devices", "all"), ...DEVICES
+    .filter(({ id }) => available.has(id) || state.comparisonDevice === id)
+    .map(({ id, name, model }) => new Option(`${name} · ${model}`, id)));
+  comparisonDevice.value = state.comparisonDevice;
+  renderNavigation();
+}
+
+function chooseDevice(id) {
+  if (state.comparisonDevice === id) return;
+  const usingDefault = comparisonResult.value === defaultResult(state.comparisonDevice);
+  state.comparisonDevice = id;
+  if (usingDefault) comparisonResult.value = defaultResult(id);
+  if (id !== "all") state.device = id;
+  state.hidden.clear();
+  state.pinned.clear();
+  comparisonDevice.value = id;
+  renderNavigation();
+  renderComparison();
+  renderWorkloads();
+  writeQuery();
+}
+
+function chooseApi(api) {
+  const url = new URL(location.href);
+  for (const key of ["results", "sort", "tables", "inspect-chip", "workload", "metric", "view", "hide", "run"]) {
+    url.searchParams.delete(key);
+  }
+  url.searchParams.set("api", api);
+  if (!state.comparisons.some((entry) => entry.api.id === api && entry.device.id === state.comparisonDevice)) {
+    url.searchParams.delete("chip");
+  }
+  url.hash = "";
+  if (url.href !== location.href) history.pushState(null, "", url);
+  restoreQuery();
 }
 
 function compareDelta(ratio) {
@@ -301,7 +355,7 @@ function buildGroupSection(group, entries, scope) {
   headingText.id = `${section.id}-title`;
   const chartCases = selectChartCases(group, entries);
   title.append(headingText, node("p", chartCases.length
-    ? "Selected cases · Metal = 1×" : "Measurement coverage · No matched results in view"));
+    ? "Selected cases · Metal = 1×" : d3dView() ? `${entries.length} measurements` : "Measurement coverage"));
   heading.append(title);
 
   const matched = scope.filter((entry) => entry.ratio != null);
@@ -320,7 +374,9 @@ function buildGroupSection(group, entries, scope) {
     scores.append(speed, frequency);
     heading.append(scores);
   }
-  section.append(heading, chartCases.length ? buildGroupChart(group, chartCases) : buildCoverageChart(entries));
+  section.append(heading);
+  if (chartCases.length) section.append(buildGroupChart(group, chartCases));
+  else if (!d3dView()) section.append(buildCoverageChart(entries));
 
   const details = node("details", null, "group-measurements");
   details.open = state.openGroups.has(group.id);
@@ -329,6 +385,7 @@ function buildGroupSection(group, entries, scope) {
   const table = byId("group-table").content.firstElementChild.cloneNode(true);
   table.setAttribute("aria-label", `${group.title} measurements`);
   const extent = axisRange(entries);
+  table.querySelector(".raw-heading").hidden = !d3dView();
   table.querySelector(".axis-min").textContent = `${axisNumber.format(2 ** -extent)}×`;
   table.querySelector(".axis-max").textContent = `${axisNumber.format(2 ** extent)}×`;
   table.querySelector("tbody").append(...entries.map((entry) => renderComparisonRow(entry, extent)));
@@ -370,72 +427,111 @@ function showComparisonNotice(id, runs) {
   warning.textContent = issue ? `${issue}. Flagged Linux runs are excluded from Metal comparisons.` : "";
 }
 
-function renderWinShares() {
-  const rows = DEVICES.map((device) => {
-    const entries = state.comparisons.filter((entry) => entry.device.id === device.id && entry.ratio != null);
-    const wins = entries.filter((entry) => entry.outcome === "linux").length;
-    const losses = entries.filter((entry) => entry.outcome === "metal").length;
-    const ties = entries.length - wins - losses;
-    const row = node("div");
-    const label = node("div", null, "win-label");
-    const issue = state.runs.find((run) => run.device === device.id && run.comparisonIssue)?.comparisonIssue;
-    const summary = entries.length ? `${wins}/${entries.length} · ${percent.format(wins / entries.length)}` : issue ?? "No matches";
-    label.append(node("strong", device.name), node("span", summary, "technical"));
-    const bar = node("div", null, "win-bar");
-    bar.setAttribute("role", "img");
-    bar.setAttribute("aria-label", `${device.name}, Linux faster in ${wins}, Metal faster in ${losses}, ${ties} exact ties`);
-    for (const [count, className, outcome] of [
-      [wins, "linux-lead", "Linux faster"], [losses, "metal-lead", "Metal faster"], [ties, "exact-tie", "Exact ties"],
-    ]) {
-      if (!count) continue;
-      const segment = node("span", null, className);
-      segment.title = `${outcome} · ${count}`;
-      segment.style.flexGrow = count;
-      bar.append(segment);
-    }
-    row.append(label, bar);
-    return row;
+function buildDeviceScore({ device, matches, ratio, wins }, extent) {
+  const row = node("div", null, "device-score");
+  const link = node("a", device.name);
+  const params = new URLSearchParams({ api: state.api, chip: device.id });
+  link.href = `?${params}`;
+  link.addEventListener("click", (event) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    chooseDevice(device.id);
+    comparisonDevice.focus({ preventScroll: true });
   });
-  const axis = node("div", null, "win-axis");
-  axis.append(node("span", "0%"), node("span", "50%"), node("span", "100%"));
-  byId("wins-overview").replaceChildren(...rows, axis);
+  const track = node("div", null, "score-track");
+  track.setAttribute("aria-hidden", "true");
+  const bar = node("span", null, "score-bar");
+  const plot = Math.log2(ratio);
+  const length = Math.abs(plot) * 50 / extent;
+  bar.style.setProperty("--score-start", `${plot < 0 ? 50 - length : 50}%`);
+  bar.style.setProperty("--score-width", `${Math.max(length, 0.4)}%`);
+  bar.classList.toggle("below", plot < 0);
+  track.append(bar);
+  const score = node("strong", `${ratio.toFixed(2)}×`, ratio >= 1 ? "linux-lead" : "metal-lead");
+  score.title = `Geometric mean across ${matches.length} matched cases`;
+  row.append(link, track, score, node("span", `${wins}/${matches.length} faster`, "score-count"));
+  return row;
+}
+
+function renderOverview(entries) {
+  const root = byId("api-overview");
+  const matched = entries.filter((entry) => entry.ratio != null);
+  if (!matched.length) {
+    const usable = entries.filter((entry) => entry.linuxMetric);
+    const devices = new Set(usable.map(({ device }) => device.id));
+    const card = node("div", null, "overview-story");
+    const coverage = d3dView() ? `${devices.size} ${devices.size === 1 ? "device" : "devices"} tested`
+      : usable.every(({ linux }) => !canCompare(linux.run)) ? "The recorded suite revision does not qualify for Metal comparisons."
+      : "No matched Metal cases for this selection.";
+    card.append(node("span", usable.length ? number.format(usable.length) : "—", "overview-number"),
+      node("h3", usable.length ? "Measured cases" : "No measurements in this view"),
+      node("p", usable.length ? coverage : "Choose another device or API."));
+    const samples = node("div", null, "overview-panel panel");
+    if (usable.length) {
+      samples.append(node("h3", "Selected workloads"));
+      const featured = [
+        ["render.light", "Triangle rendering", 4], ["render.postfx", "Post-processing", 2],
+        ["compute.heavy", "Heavy compute", 4], ["copy.bw", "Buffer copy", 4],
+        ["compile.pso", "Cold pipeline compile", 1],
+      ];
+      const list = node("dl", null, "overview-list");
+      for (const [test, name, depth] of featured) {
+        const entry = usable.find(({ row }) => row.test === test && row.depth === depth);
+        if (!entry) continue;
+        const value = entry.linuxMetric;
+        const label = devices.size > 1 ? `${name} · ${entry.device.name}` : name;
+        const term = node("dt", label);
+        term.append(node("small", entry.configuration));
+        list.append(term, node("dd", displayValue(value.median, value.unit)));
+      }
+      samples.append(list);
+      root.replaceChildren(card, samples);
+    } else root.replaceChildren(card);
+    return;
+  }
+
+  const scores = DEVICES.flatMap((device) => {
+    const matches = matched.filter((entry) => entry.device.id === device.id);
+    if (!matches.length) return [];
+    return [{ device, matches, ratio: geometricMeanRatio(matches.map(({ ratio }) => ratio)),
+      wins: matches.filter(({ ratio }) => ratio > 1).length }];
+  }).sort((a, b) => b.ratio - a.ratio);
+  const lead = scores[0];
+  const story = node("div", null, "overview-story");
+  const label = lead.ratio >= 1 ? "Faster than Metal" : "Below Metal";
+  story.append(node("span", percent.format(Math.abs(lead.ratio - 1)), `overview-number ${lead.ratio >= 1 ? "linux-lead" : "metal-lead"}`),
+    node("h3", `${lead.device.name} · ${lead.ratio === 1 ? "Metal parity" : label}`),
+    node("p", `Geometric mean · ${lead.matches.length} matched cases. Linux leads in ${lead.wins}.`));
+  const detail = node("div", null, "overview-panel panel");
+  detail.append(node("h3", "Performance by device"));
+  const ahead = scores.filter(({ ratio }) => ratio > 1).length;
+  const axis = node("p", state.comparisonDevice === "all"
+    ? `${ahead} of ${scores.length} devices ahead · Metal = 1.00×` : "Metal = 1.00× · geometric mean", "overview-axis");
+  const extent = axisRange(scores);
+  detail.append(axis, ...scores.slice(0, 4).map((score) => buildDeviceScore(score, extent)));
+  if (scores.length > 4) {
+    const more = node("details", null, "other-devices");
+    more.append(node("summary", `Show ${scores.length - 4} more devices`), ...scores.slice(4).map((score) => buildDeviceScore(score, extent)));
+    detail.append(more);
+  }
+  root.replaceChildren(story, detail);
 }
 
 function renderComparison() {
-  const available = state.comparisons.filter((entry) =>
-    state.comparisonDevice === "all" || entry.device.id === state.comparisonDevice);
+  const available = scopedEntries();
   showComparisonNotice("comparison-notice", state.comparisonDevice === "all" ? [] : available.map((entry) => entry.linux?.run));
-  for (const option of comparisonApi.options) {
-    option.disabled = Boolean(option.value && !available.some((entry) => entry.api.id === option.value));
-  }
-  if (comparisonApi.selectedOptions[0]?.disabled) comparisonApi.value = "";
+  renderOverview(available);
 
   const query = comparisonSearch.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const filtered = available.filter((entry) =>
-    (!comparisonApi.value || comparisonApi.value === entry.api.id) &&
     query.every((term) => entry.searchable.includes(term)));
   const counts = { linux: 0, metal: 0, tied: 0, unmatched: 0 };
   for (const entry of filtered) counts[entry.outcome]++;
   const matched = counts.linux + counts.metal + counts.tied;
-  const resultStats = [
-    ["Matched", matched, null, ""],
-    ["Linux faster", counts.linux, matched && percent.format(counts.linux / matched), "linux-lead"],
-    ["Metal faster", counts.metal, matched && percent.format(counts.metal / matched), "metal-lead"],
-    ["Exact ties", counts.tied, matched && percent.format(counts.tied / matched), ""],
-  ];
-  byId("comparison-summary").replaceChildren(...resultStats.map(([label, total, share, className]) => {
-    const item = node("div");
-    const value = node("dd", null, className);
-    value.append(node("span", number.format(total)));
-    if (share) value.append(node("small", share));
-    item.append(node("dt", label), value);
-    return item;
-  }));
-
-  const result = comparisonResult.value;
+  const result = d3dView() ? "all" : comparisonResult.value;
   const visible = filtered.filter((row) => result === "all" ||
     (result === "matched" ? row.outcome !== "unmatched" : row.outcome === result));
-  const order = comparisonSort.value;
+  const order = d3dView() ? "workload" : comparisonSort.value;
   visible.sort((a, b) => {
     if (order !== "workload") {
       if ((a.ratio == null) !== (b.ratio == null)) return a.ratio == null ? 1 : -1;
@@ -453,7 +549,8 @@ function renderComparison() {
     ? "No Metal matches for these filters. Switch Results to Unmatched to see the available measurements."
     : "No results for these filters.";
   byId("comparison-status").textContent =
-    `${groupCount} groups · ${number.format(visible.length)} shown · ${number.format(matched)} matched · ${number.format(counts.unmatched)} unmatched`;
+    d3dView() ? `${groupCount} groups · ${number.format(visible.length)} measurements`
+      : `${groupCount} groups · ${number.format(visible.length)} shown · ${number.format(matched)} matched · ${number.format(counts.unmatched)} unmatched`;
 }
 
 function renderComparisonRow(entry, extent) {
@@ -474,10 +571,11 @@ function renderComparisonRow(entry, extent) {
   const linuxValue = linuxMetric ? displayValue(linuxMetric.median, linuxMetric.unit) : "—";
   const metalValue = metalMetric ? displayValue(metalMetric.median, metalMetric.unit) : "—";
   const mobileValues = node("span", null, "comparison-mobile technical");
-  mobileValues.append(node("span", `L ${linuxValue}`), node("span", `M ${metalValue}`));
+  mobileValues.append(node("span", d3dView() ? linuxValue : `L ${linuxValue}`));
+  if (!d3dView()) mobileValues.append(node("span", `M ${metalValue}`));
   workload.append(mobileValues);
   const left = node("td", linuxValue, "comparison-median");
-  const right = node("td", metalValue, "comparison-median");
+  const right = node("td", metalValue, "comparison-median metal-column");
   for (const [cell, source] of [[left, linux], [right, metal]]) {
     if (source) {
       cell.title = [metricName(source.row.primary ?? "unavailable"),
@@ -487,7 +585,9 @@ function renderComparisonRow(entry, extent) {
 
   const parity = node("td");
   if (ratio == null) {
-    parity.append(node("div", entry.reason, "comparison-unmatched"));
+    const status = d3dView() && entry.reason === "Metal missing"
+      ? (linuxMetric ? "Measured" : row.status === "skip" ? "Skipped" : "Unavailable") : entry.reason;
+    parity.append(node("div", status, "comparison-unmatched"));
   } else {
     const className = entry.outcome === "linux" ? "linux-lead" : entry.outcome === "metal" ? "metal-lead" : "";
     const content = node("div", null, `comparison-ratio ${className}`);
@@ -529,12 +629,26 @@ function inspectComparison(entry, returnTarget) {
 }
 
 function renderWorkloads(previous = workloadSelect.value, requestedMetric = metricSelect.value) {
-  byId("inspector-device").textContent = DEVICES.find((device) => device.id === state.device).name;
   const unique = new Map();
-  for (const run of state.runs.filter((record) => record.device === state.device)) {
+  const active = state.runs.filter((run) => run.api === state.api);
+  if (!active.some((run) => run.device === state.device) && active.length && state.comparisonDevice === "all") {
+    state.device = active[0].device;
+  }
+  const scoped = active.filter((run) => run.device === state.device);
+  for (const run of scoped) {
     for (const row of run.rows) unique.set(workloadKey(row), row);
   }
 
+  byId("inspector-device").textContent = DEVICES.find((device) => device.id === state.device)?.name ?? "";
+  if (!scoped.length) {
+    inspector.open = false;
+    inspector.hidden = true;
+    state.plot = null;
+    return;
+  }
+  inspector.hidden = false;
+  viewSelect.parentElement.hidden = d3dView();
+  if (d3dView()) viewSelect.value = "raw";
   const groups = new Map();
   for (const [key, row] of unique) {
     const group = BENCHMARK_GROUPS.find(({ id }) => id === benchmarkGroup(row)).title;
@@ -574,10 +688,10 @@ function render(resetMetrics = false, requestedMetric = metricSelect.value) {
   }
   const metric = metricSelect.value;
   const metal = records.find((record) => record.id === "metal");
-  const metalValues = new Map((metal.usable ?? []).map((entry) => [entry.depth, entry.metrics[metric]]));
+  const metalValues = new Map((metal?.usable ?? []).map((entry) => [entry.depth, entry.metrics[metric]]));
   const shape = records.flatMap((record) => record.usable ?? []).find((entry) => entry.metrics[metric])?.metrics[metric];
   const relativeView = viewSelect.value === "relative";
-  const comparisonAvailable = canCompare(metal.run);
+  const comparisonAvailable = canCompare(metal?.run);
   const series = records.map((record) => {
     const points = (record.usable ?? []).flatMap((entry) => {
       const value = entry.metrics[metric];
@@ -654,6 +768,7 @@ function renderMeasurements(series) {
       const tr = node("tr");
       tr.title = `Source row ${row.line}`;
       tr.replaceChildren(...cells.map((cell) => node("td", cell)));
+      if (d3dView()) tr.lastElementChild.className = "metal-column";
       rows.push(tr);
     }
   }
@@ -890,6 +1005,8 @@ function setFilter(select, value, fallback = "") {
 
 function restoreQuery() {
   const params = new URLSearchParams(location.search);
+  const api = params.get("api");
+  state.api = Object.hasOwn(API_VIEWS, api) ? api : "vulkan";
   const selected = DEVICES.find((device) => device.id === params.get("chip"));
   const detail = DEVICES.find((device) => device.id === params.get("inspect-chip"));
   state.comparisonDevice = selected?.id ?? "all";
@@ -901,7 +1018,8 @@ function restoreQuery() {
   state.openGroups = new Set(BENCHMARK_GROUPS.filter(({ id }) => openGroups.includes(id)).map(({ id }) => id));
 
   comparisonSearch.value = params.get("q") ?? "";
-  setFilter(comparisonApi, params.get("api"));
+  comparisonResult.parentElement.hidden = d3dView();
+  comparisonSort.parentElement.hidden = d3dView();
   setFilter(comparisonResult, params.get("results"), defaultResult(state.comparisonDevice));
   setFilter(comparisonSort, params.get("sort"), "linux");
   inspector.open = params.has("workload");
@@ -925,7 +1043,7 @@ function writeQuery(method = "pushState") {
   const values = {
     chip: state.comparisonDevice === "all" ? "" : state.comparisonDevice,
     q: comparisonSearch.value.trim(),
-    api: comparisonApi.value,
+    api: state.api === "vulkan" ? "" : state.api,
     results: comparisonResult.value === defaultResult(state.comparisonDevice) ? "" : comparisonResult.value,
     sort: comparisonSort.value === "linux" ? "" : comparisonSort.value,
     tables: [...state.openGroups].join(","),
@@ -954,7 +1072,6 @@ function applyFeed(feed) {
   const firstLoad = byId("explorer").hidden;
   byId("explorer").hidden = false;
   byId("load-status").hidden = true;
-  renderWinShares();
   restoreQuery();
   if (firstLoad && location.hash.startsWith("#group-")) {
     const target = byId(location.hash.slice(1));
@@ -991,7 +1108,15 @@ comparisonSearch.addEventListener("input", () => {
   renderComparison();
   writeQuery("replaceState");
 });
-for (const filter of [comparisonApi, comparisonResult, comparisonSort]) {
+apiNav.addEventListener("click", (event) => {
+  const link = event.target.closest("a[data-api]");
+  if (!link || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+  event.preventDefault();
+  chooseApi(link.dataset.api);
+});
+comparisonApi.addEventListener("change", () => chooseApi(comparisonApi.value));
+comparisonDevice.addEventListener("change", () => chooseDevice(comparisonDevice.value));
+for (const filter of [comparisonResult, comparisonSort]) {
   filter.addEventListener("change", () => { renderComparison(); writeQuery(); });
 }
 window.addEventListener("popstate", () => {

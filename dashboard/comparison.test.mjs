@@ -148,3 +148,14 @@ test("flagged clock-cap measurements stay inspectable and cannot affect scores",
   const verified = run("vulkan", [result(230)], { date: "2026-11-22" });
   assert.equal(buildComparisons([flagged, metal, verified])[0].ratio, 1.15);
 });
+
+test("translated Direct3D measurements stay visible without entering Metal scores", () => {
+  const d11 = run("d3d11", [result(140)]);
+  const d12 = run("d3d12", [result(120)]);
+  const vk = run("vulkan", [result(150)]);
+  const metal = run("metal", [result(100)]);
+  const pairs = buildComparisons([d11, d12, vk, metal]);
+  assert.deepEqual(pairs.map((entry) => [entry.api, entry.linuxMetric.median, entry.ratio]), [
+    ["d3d11", 140, null], ["d3d12", 120, null], ["vulkan", 150, 1.5],
+  ]);
+});

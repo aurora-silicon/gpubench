@@ -91,7 +91,8 @@ export function buildComparisons(runs) {
       results.push({ api: "metal", ...compareSources(null, metal) });
     }
     for (const [api, sources] of linux) {
-      results.push({ api, ...compareSources(sources, metal) });
+      const baseline = api === "d3d11" || api === "d3d12" ? null : metal;
+      results.push({ api, ...compareSources(sources, baseline) });
     }
   }
   return results;
