@@ -25,6 +25,8 @@ The comparison table selects the newest run with a recorded, clean suite revisio
 
 Rows with a `comparisonIssue` remain available as measured values and are excluded from Metal ratios. The archived Neo Metal single-queue triangle cases at depths 8 and 32 need recapture with matching attachment ordering and a verified image. The archive has no image check for those cases, and the published equivalent Metal workload reuses an untracked attachment across in-flight submissions.
 
+The archived Neo Metal single-queue `compute.light` case at depth 4 also needs recapture. Its output was unchecked, and the published equivalent workload shares an untracked destination across in-flight dispatches. The recapture should use matched per-slot buffers, FIFO retirement, and validation of the measured output.
+
 ## Deploy the site
 
 Bump the version query on changed CSS and JavaScript URLs before deploying UI changes. This lets browsers pick up the new files on the custom domain. From this repository's `gpu-dashboard` branch, run:
