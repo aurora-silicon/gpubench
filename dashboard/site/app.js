@@ -11,7 +11,6 @@ const DEVICES = [
   { id: "j413", name: "M2", model: "MacBook Air" },
   { id: "j473", name: "M2 (Mac mini)", model: "Mac mini" },
   { id: "m1pro", name: "M1 Pro", model: "MacBook Pro" },
-  { id: "j700", name: "A18 Pro (lab)", model: "MacBook Neo (Aurora lab)" },
   { id: "j775c", name: "M5 Max", model: "Mac Studio" },
   { id: "j613", name: "M3", model: "MacBook Air 13-inch (J613)" },
   { id: "j616c", name: "M4 Max (32-core)", model: "MacBook Pro (J616C)" },
@@ -1094,7 +1093,9 @@ function writeQuery(method = "pushState") {
 }
 
 function applyFeed(feed) {
-  state.runs = feed.runs.toSorted((a, b) => b.date.localeCompare(a.date));
+  state.runs = feed.runs
+    .filter((run) => DEVICES.some((device) => device.id === run.device))
+    .sort((a, b) => b.date.localeCompare(a.date));
   state.comparisons = makeComparisonRows(state.runs);
   const device = DEVICES.find((item) => state.runs.some((run) => run.device === item.id));
   if (!device) throw new Error("No supported devices in benchmark feed");

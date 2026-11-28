@@ -23,7 +23,6 @@
   --chart-j413: #00788a;
   --chart-j473: #2a6a4e;
   --chart-m1pro: #714ac1;
-  --chart-j700: #a4372c;
   --chart-j775c: #6b4f2a;
   --chart-j613: #4a5a7a;
   --sans: Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -54,7 +53,6 @@
     --chart-j413: #61cada;
     --chart-j473: #74cfa5;
     --chart-m1pro: #ba9aff;
-    --chart-j700: #f89182;
     --chart-j775c: #d8b48a;
     --chart-j613: #a9b8d8;
   }
@@ -308,7 +306,6 @@ th:first-child, td:first-child { padding-left: 20px; font-family: var(--sans); }
 .chart-j413 { --chip-tone: var(--chart-j413); }
 .chart-j473 { --chip-tone: var(--chart-j473); }
 .chart-m1pro { --chip-tone: var(--chart-m1pro); }
-.chart-j700 { --chip-tone: var(--chart-j700); }
 .chart-neo { --chip-tone: var(--vulkan); }
 .chart-m5-pro { --chip-tone: var(--gl-native); }
 .chart-m4-mini { --chip-tone: var(--gl-zink); }
