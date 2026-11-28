@@ -74,13 +74,17 @@ def test_suite_runner_can_use_a_literal_plan_with_metacharacters(tmp_path):
 
 def test_suite_runner_preserves_executor_failures(tmp_path):
     plan = tmp_path / "plan.txt"
-    plan.write_text("quick suite early\nquick suite reported\nquick suite next\n")
+    plan.write_text(
+        "quick suite early\nquick suite reported\nquick suite interrupted\nquick suite next\n"
+    )
     executor = tmp_path / "gpubench-vk"
     executor.write_text(
         "#!/bin/sh\n"
         "case \"$2\" in\n"
         "  early) echo 'setup failed' >&2; exit 2 ;;\n"
         "  reported) echo '{\"test\":\"reported\",\"status\":\"fail\"}'; exit 1 ;;\n"
+        "  interrupted) printf '%s\\n' '{\"test\":\"completed\",\"status\":\"ok\"}'; "
+        "printf '%s' '{\"test\":\"broken'; kill -KILL \"$$\" ;;\n"
         "  next) echo '{\"test\":\"next\",\"status\":\"ok\"}' ;;\n"
         "esac\n"
     )
@@ -100,9 +104,11 @@ def test_suite_runner_preserves_executor_failures(tmp_path):
 
     rows = [json.loads(line) for line in (out / "results.jsonl").read_text().splitlines()]
     assert [(row["test"], row["status"]) for row in rows] == [
-        ("early", "fail"), ("reported", "fail"), ("next", "ok"),
+        ("early", "fail"), ("reported", "fail"), ("completed", "ok"),
+        ("interrupted", "fail"), ("next", "ok"),
     ]
     assert "code 2" in rows[0]["error"]
+    assert "code 137" in rows[3]["error"]
     assert "setup failed" in (out / "log.txt").read_text()
     assert not list(out.glob(".executor.*"))
 

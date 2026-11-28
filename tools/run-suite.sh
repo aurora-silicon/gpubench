@@ -77,11 +77,22 @@ for plan in $PLANS; do
     wd=$!
     wait "$pid"; rc=$?
     kill "$wd" 2>/dev/null; wait "$wd" 2>/dev/null
-    if [ "$rc" -ge 128 ] || { [ "$rc" -ne 0 ] && [ ! -s "$result_file" ]; }; then
-      printf '{"schema":"gpubench-result/1","lane":"%s","test":"%s","params":{},"mode":"queue","depth":0,"status":"fail","error":"executor exited with code %s; see log.txt"}\n' \
-        "$lane" "$test" "$rc" >> "$result_file"
+    if [ "$rc" -eq 0 ]; then
+      cat "$result_file" >> "$OUT/results.jsonl" || exit 1
+    else
+      # A killed executor may leave a partial JSON line. Keep the complete
+      # lines and let the failed read set line to any incomplete tail.
+      emitted=
+      line=
+      while IFS= read -r line; do
+        printf '%s\n' "$line" || exit 1
+        emitted=1
+      done < "$result_file" >> "$OUT/results.jsonl" || exit 1
+      if [ "$rc" -ge 128 ] || [ -z "$emitted" ] || [ -n "$line" ]; then
+        printf '{"schema":"gpubench-result/1","lane":"%s","test":"%s","params":{},"mode":"queue","depth":0,"status":"fail","error":"executor exited with code %s; see log.txt"}\n' \
+          "$lane" "$test" "$rc" >> "$OUT/results.jsonl" || exit 1
+      fi
     fi
-    cat "$result_file" >> "$OUT/results.jsonl" || exit 1
     echo "$(date +%T) [$chunk] $lane $test $args: rc=$rc $(( $(date +%s) - t0 ))s"
   done < "$plan"
 done
