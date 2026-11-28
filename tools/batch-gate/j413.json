@@ -1,0 +1,37 @@
+{
+  "device": "Apple M2 (G14G B0)",
+  "captures": [
+    {
+      "file": "triangle.gfxr",
+      "sha256": "c52c469ca52c9f5f7e01500eefc20e92ee962bc2364d34fdd85b831dfcaabcb0",
+      "frames": {
+        "1": {
+          "file": "goldens/j413/triangle.png",
+          "sha256": "862b27a66304d172a6ca2a77ea75c611212a480ae842f74553336b59dc607abd"
+        },
+        "2": {
+          "file": "goldens/j413/triangle.png",
+          "sha256": "862b27a66304d172a6ca2a77ea75c611212a480ae842f74553336b59dc607abd"
+        }
+      },
+      "replayer": {
+        "sha256": "e0f22d23e417bf241fe7049cc20b8a7619ff4cee942a48f67cf0c43309873dd1",
+        "version": "gfxrecon-replay version info: GFXReconstruct Version 1.0.5-dev (dev:ce0b376) Release Vulkan Header Version 1.4.368"
+      }
+    },
+    {
+      "file": "tri_glsl.trace",
+      "sha256": "ae070bbfd74f3d988e057ff74ae13f51fa1896b4b2e99e51e764ea4b6eb370d3",
+      "frames": {
+        "6935": {
+          "file": "goldens/j413/tri-glsl.png",
+          "sha256": "721671e325b244f4a846d9d80e994f0c461fcf9ab96acce5cc0e4c50578b1961"
+        }
+      },
+      "replayer": {
+        "sha256": "ecde33e4769a6e284b9eda1f119dcce5a3dea4adf4501106fcaabc8af5592809",
+        "version": "apitrace 0.0-unknown"
+      }
+    }
+  ]
+}
