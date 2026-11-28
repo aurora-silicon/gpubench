@@ -1394,6 +1394,10 @@ const struct gb_test gb_tests[] = {
    /* Queue rebind & context-churn benchmarks */
    {"queue.rebind", gb_run_queue_rebind},
    {"queue.churn", gb_run_queue_churn},
+   /* GTA V / D3D12-on-Vulkan driver bottleneck benchmarks */
+   {"render.storage_meta_discard", gb_run_render_storage_meta_discard},
+   {"render.aliased_heap_pipeline", gb_run_render_aliased_heap_pipeline},
+   {"render.gbuf_pre_gfx", gb_run_render_gbuf_pre_gfx},
    {NULL, NULL},
 };
 

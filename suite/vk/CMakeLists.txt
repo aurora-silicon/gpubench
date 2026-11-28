@@ -45,7 +45,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/shaders.c
           -P ${GB_SHADER_DIR}/embed.cmake
   DEPENDS ${spv_files} ${GB_SHADER_DIR}/embed.cmake VERBATIM)
 
-add_executable(gpubench-vk src/main.c src/tests.c src/tests_wave1.c src/tests_wave2.c src/tests_wave3.c src/tests_rebind.c src/gb_wave1_ref.c src/gb_wave2_ref.c src/gb_wave3_ref.c ${CMAKE_CURRENT_BINARY_DIR}/shaders.c)
+add_executable(gpubench-vk src/main.c src/tests.c src/tests_wave1.c src/tests_wave2.c src/tests_wave3.c src/tests_rebind.c src/tests_gtav.c src/gb_wave1_ref.c src/gb_wave2_ref.c src/gb_wave3_ref.c ${CMAKE_CURRENT_BINARY_DIR}/shaders.c)
 target_include_directories(gpubench-vk PRIVATE src)
 target_compile_options(gpubench-vk PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 target_compile_definitions(gpubench-vk PRIVATE GB_SUITE_SHA="${GB_SUITE_SHA}")
