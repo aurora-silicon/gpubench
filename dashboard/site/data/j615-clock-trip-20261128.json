@@ -1,0 +1,131 @@
+{
+  "schema": "gpubench/j615-clock-trial/1",
+  "date": "2026-11-28",
+  "device": "j615",
+  "suite": "ae90a40",
+  "api": "vulkan",
+  "driver": "Mesa 26.3.0-devel (git-36623c0a4a), Borealis, derived from Honeykrisp",
+  "classification": "guarded diagnostic comparison",
+  "busy_sample_min_utilization_percent": 80,
+  "trial_kernel_source": "4a42f31050028aa7b9e5dc007e7ea231acc66356",
+  "thermal_trip_fix": "https://github.com/aurora-silicon/linux/pull/3189",
+  "saved_soc_die_trips": [],
+  "trial_soc_die_trips": [
+    "passive",
+    "hot"
+  ],
+  "arms": {
+    "saved": {
+      "kernel": "7.3.0-aurora-fleet90-airs2",
+      "busy_effective_state_samples": {
+        "S1": 69
+      },
+      "workloads": {
+        "compute-d2": {
+          "test": "compute.heavy",
+          "params": {
+            "kind": "alu"
+          },
+          "depth": 2,
+          "wall_us_per_submit": 2790.6977,
+          "gpu_interval_us": 2560.375
+        },
+        "fill-1080p-d1": {
+          "test": "render.heavy",
+          "params": {
+            "kind": "fill",
+            "res": "1080p"
+          },
+          "depth": 1,
+          "wall_us_per_submit": 2135.2313,
+          "gpu_interval_us": 1796.125
+        },
+        "fill-1080p-d2": {
+          "test": "render.heavy",
+          "params": {
+            "kind": "fill",
+            "res": "1080p"
+          },
+          "depth": 2,
+          "wall_us_per_submit": 1769.9115
+        },
+        "fill-2160p-d1": {
+          "test": "render.heavy",
+          "params": {
+            "kind": "fill",
+            "res": "2160p"
+          },
+          "depth": 1,
+          "wall_us_per_submit": 7407.4074,
+          "gpu_interval_us": 7074.959
+        },
+        "fill-720p-d1": {
+          "test": "render.heavy",
+          "params": {
+            "kind": "fill",
+            "res": "720p"
+          },
+          "depth": 1,
+          "wall_us_per_submit": 1165.0485,
+          "gpu_interval_us": 819.167
+        }
+      }
+    },
+    "trial": {
+      "kernel": "7.3.0-46.fc45.aurora.aarch64",
+      "busy_effective_state_samples": {
+        "S8": 67
+      },
+      "workloads": {
+        "compute-d2": {
+          "test": "compute.heavy",
+          "params": {
+            "kind": "alu"
+          },
+          "depth": 2,
+          "wall_us_per_submit": 778.2101,
+          "gpu_interval_us": 647
+        },
+        "fill-1080p-d1": {
+          "test": "render.heavy",
+          "params": {
+            "kind": "fill",
+            "res": "1080p"
+          },
+          "depth": 1,
+          "wall_us_per_submit": 780.2341,
+          "gpu_interval_us": 454.542
+        },
+        "fill-1080p-d2": {
+          "test": "render.heavy",
+          "params": {
+            "kind": "fill",
+            "res": "1080p"
+          },
+          "depth": 2,
+          "wall_us_per_submit": 449.4382
+        },
+        "fill-2160p-d1": {
+          "test": "render.heavy",
+          "params": {
+            "kind": "fill",
+            "res": "2160p"
+          },
+          "depth": 1,
+          "wall_us_per_submit": 2120.1413,
+          "gpu_interval_us": 1787.917
+        },
+        "fill-720p-d1": {
+          "test": "render.heavy",
+          "params": {
+            "kind": "fill",
+            "res": "720p"
+          },
+          "depth": 1,
+          "wall_us_per_submit": 516.7959,
+          "gpu_interval_us": 211.5
+        }
+      }
+    }
+  }
+}
