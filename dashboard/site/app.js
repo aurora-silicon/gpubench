@@ -1,5 +1,5 @@
-import { buildComparisons, canCompare, compatible, geometricMeanRatio, metalPipelineUnsupported, relative, workloadKey } from "./comparison.js?v=8";
-import { BENCHMARK_GROUPS, benchmarkGroup, selectChartCases } from "./groups.js?v=8";
+import { buildComparisons, canCompare, compatible, geometricMeanRatio, metalPipelineUnsupported, relative, workloadKey } from "./comparison.js?v=9";
+import { BENCHMARK_GROUPS, benchmarkGroup, selectChartCases } from "./groups.js?v=9";
 
 const DEVICES = [
   { id: "neo", name: "A18 Pro", model: "MacBook Neo" },
@@ -28,8 +28,8 @@ const API_VIEWS = {
   vulkan: ["Vulkan on Linux", "Borealis Vulkan compared with native Metal on the same Mac."],
   "gl-native": ["OpenGL on Linux", "Native Gallium OpenGL compared with matching Metal workloads."],
   "gl-zink": ["OpenGL on Linux", "Zink translates OpenGL to Vulkan. Compare matching workloads with Metal."],
-  d3d11: ["Direct3D 11 on Linux", "Measured with DXVK running over Borealis Vulkan."],
-  d3d12: ["Direct3D 12 on Linux", "Measured with vkd3d-proton running over Borealis Vulkan."],
+  d3d11: ["Direct3D 11 on Linux", "DXVK over Borealis Vulkan on Linux, compared with matching native Metal workloads."],
+  d3d12: ["Direct3D 12 on Linux", "vkd3d-proton over Borealis Vulkan on Linux, compared with matching native Metal workloads."],
 };
 const TEST_NAMES = {
   "submit.empty": "Empty submission",
@@ -150,7 +150,7 @@ function d3dView() {
 }
 
 function viewApis() {
-  return APIS.filter(({ id }) => id === state.api || (!d3dView() && id === "metal"));
+  return APIS.filter(({ id }) => id === state.api || id === "metal");
 }
 
 function recordsFor(key) {
@@ -192,7 +192,6 @@ function renderNavigation() {
   const [title, description] = API_VIEWS[state.api];
   byId("api-title").textContent = title;
   byId("api-description").textContent = description;
-  byId("explorer").classList.toggle("raw-api", d3dView());
 }
 
 function renderDevices() {
@@ -355,7 +354,7 @@ function buildGroupSection(group, entries, scope) {
   headingText.id = `${section.id}-title`;
   const chartCases = selectChartCases(group, entries);
   title.append(headingText, node("p", chartCases.length
-    ? "Selected cases · Metal = 1×" : d3dView() ? `${entries.length} measurements` : "Measurement coverage"));
+    ? "Selected cases · Metal = 1×" : "Measurement coverage"));
   heading.append(title);
 
   const matched = scope.filter((entry) => entry.ratio != null);
@@ -374,9 +373,7 @@ function buildGroupSection(group, entries, scope) {
     scores.append(speed, frequency);
     heading.append(scores);
   }
-  section.append(heading);
-  if (chartCases.length) section.append(buildGroupChart(group, chartCases));
-  else if (!d3dView()) section.append(buildCoverageChart(entries));
+  section.append(heading, chartCases.length ? buildGroupChart(group, chartCases) : buildCoverageChart(entries));
 
   const details = node("details", null, "group-measurements");
   details.open = state.openGroups.has(group.id);
@@ -385,7 +382,6 @@ function buildGroupSection(group, entries, scope) {
   const table = byId("group-table").content.firstElementChild.cloneNode(true);
   table.setAttribute("aria-label", `${group.title} measurements`);
   const extent = axisRange(entries);
-  table.querySelector(".raw-heading").hidden = !d3dView();
   table.querySelector(".axis-min").textContent = `${axisNumber.format(2 ** -extent)}×`;
   table.querySelector(".axis-max").textContent = `${axisNumber.format(2 ** extent)}×`;
   table.querySelector("tbody").append(...entries.map((entry) => renderComparisonRow(entry, extent)));
@@ -427,6 +423,19 @@ function showComparisonNotice(id, runs) {
   warning.textContent = issue ? `${issue}. Flagged Linux runs are excluded from Metal comparisons.` : "";
 }
 
+function buildScoreTrack(ratio, extent) {
+  const track = node("div", null, "score-track");
+  track.setAttribute("aria-hidden", "true");
+  const bar = node("span", null, "score-bar");
+  const plot = Math.log2(ratio);
+  const length = Math.abs(plot) * 50 / extent;
+  bar.style.setProperty("--score-start", `${plot < 0 ? 50 - length : 50}%`);
+  bar.style.setProperty("--score-width", `${Math.max(length, 0.4)}%`);
+  bar.classList.toggle("below", plot < 0);
+  track.append(bar);
+  return track;
+}
+
 function buildDeviceScore({ device, matches, ratio, wins }, extent) {
   const row = node("div", null, "device-score");
   const link = node("a", device.name);
@@ -438,19 +447,41 @@ function buildDeviceScore({ device, matches, ratio, wins }, extent) {
     chooseDevice(device.id);
     comparisonDevice.focus({ preventScroll: true });
   });
-  const track = node("div", null, "score-track");
-  track.setAttribute("aria-hidden", "true");
-  const bar = node("span", null, "score-bar");
-  const plot = Math.log2(ratio);
-  const length = Math.abs(plot) * 50 / extent;
-  bar.style.setProperty("--score-start", `${plot < 0 ? 50 - length : 50}%`);
-  bar.style.setProperty("--score-width", `${Math.max(length, 0.4)}%`);
-  bar.classList.toggle("below", plot < 0);
-  track.append(bar);
   const score = node("strong", `${ratio.toFixed(2)}×`, ratio >= 1 ? "linux-lead" : "metal-lead");
   score.title = `Geometric mean across ${matches.length} matched cases`;
-  row.append(link, track, score, node("span", `${wins}/${matches.length} faster`, "score-count"));
+  row.append(link, buildScoreTrack(ratio, extent), score, node("span", `${wins}/${matches.length} faster`, "score-count"));
   return row;
+}
+
+function buildDirect3DHighlights(matches) {
+  const cases = [
+    ["Triangle render", "render.light", { kind: "tri" }, 1],
+    ["Triangle render", "render.light", { kind: "tri" }, 32],
+    ["1080p fill", "render.heavy", { kind: "fill", res: "1080p" }, 4],
+    ["Light compute", "compute.light", {}, 1],
+    ["Arithmetic", "compute.heavy", { kind: "alu" }, 4],
+  ];
+  const selected = cases.flatMap(([title, test, params, depth]) => {
+    const key = workloadKey({ lane: "suite", test, params, mode: "queue" });
+    const match = matches.find(({ row }) => row.depth === depth && workloadKey(row) === key);
+    return match ? [{ ...match, title }] : [];
+  });
+  const panel = node("div", null, "overview-panel panel");
+  panel.append(node("h3", "Selected workloads vs Metal"),
+    node("p", `${matches[0].device.name} · Metal = 1.00×`, "overview-axis"));
+  const extent = axisRange(selected);
+  for (const entry of selected) {
+    const row = node("div", null, "device-score");
+    const label = node("button", entry.title, "overview-case");
+    label.type = "button";
+    label.setAttribute("aria-label", `Inspect ${entry.title}, depth ${entry.row.depth}`);
+    label.addEventListener("click", () => inspectComparison(entry, label));
+    row.append(label, buildScoreTrack(entry.ratio, extent),
+      node("strong", `${entry.ratio.toFixed(2)}×`, entry.ratio >= 1 ? "linux-lead" : "metal-lead"),
+      node("span", `Depth ${entry.row.depth}`, "score-count"));
+    panel.append(row);
+  }
+  return selected.length ? panel : null;
 }
 
 function renderOverview(entries) {
@@ -502,6 +533,13 @@ function renderOverview(entries) {
   story.append(node("span", percent.format(Math.abs(lead.ratio - 1)), `overview-number ${lead.ratio >= 1 ? "linux-lead" : "metal-lead"}`),
     node("h3", `${lead.device.name} · ${lead.ratio === 1 ? "Metal parity" : label}`),
     node("p", `Geometric mean · ${lead.matches.length} matched cases. Linux leads in ${lead.wins}.`));
+  if (d3dView() && scores.length === 1) {
+    const highlights = buildDirect3DHighlights(lead.matches);
+    if (highlights) {
+      root.replaceChildren(story, highlights);
+      return;
+    }
+  }
   const detail = node("div", null, "overview-panel panel");
   detail.append(node("h3", "Performance by device"));
   const ahead = scores.filter(({ ratio }) => ratio > 1).length;
@@ -528,10 +566,10 @@ function renderComparison() {
   const counts = { linux: 0, metal: 0, tied: 0, unmatched: 0 };
   for (const entry of filtered) counts[entry.outcome]++;
   const matched = counts.linux + counts.metal + counts.tied;
-  const result = d3dView() ? "all" : comparisonResult.value;
+  const result = comparisonResult.value;
   const visible = filtered.filter((row) => result === "all" ||
     (result === "matched" ? row.outcome !== "unmatched" : row.outcome === result));
-  const order = d3dView() ? "workload" : comparisonSort.value;
+  const order = comparisonSort.value;
   visible.sort((a, b) => {
     if (order !== "workload") {
       if ((a.ratio == null) !== (b.ratio == null)) return a.ratio == null ? 1 : -1;
@@ -549,8 +587,7 @@ function renderComparison() {
     ? "No Metal matches for these filters. Switch Results to Unmatched to see the available measurements."
     : "No results for these filters.";
   byId("comparison-status").textContent =
-    d3dView() ? `${groupCount} groups · ${number.format(visible.length)} measurements`
-      : `${groupCount} groups · ${number.format(visible.length)} shown · ${number.format(matched)} matched · ${number.format(counts.unmatched)} unmatched`;
+    `${groupCount} groups · ${number.format(visible.length)} shown · ${number.format(matched)} matched · ${number.format(counts.unmatched)} unmatched`;
 }
 
 function renderComparisonRow(entry, extent) {
@@ -571,11 +608,10 @@ function renderComparisonRow(entry, extent) {
   const linuxValue = linuxMetric ? displayValue(linuxMetric.median, linuxMetric.unit) : "—";
   const metalValue = metalMetric ? displayValue(metalMetric.median, metalMetric.unit) : "—";
   const mobileValues = node("span", null, "comparison-mobile technical");
-  mobileValues.append(node("span", d3dView() ? linuxValue : `L ${linuxValue}`));
-  if (!d3dView()) mobileValues.append(node("span", `M ${metalValue}`));
+  mobileValues.append(node("span", `L ${linuxValue}`), node("span", `M ${metalValue}`));
   workload.append(mobileValues);
   const left = node("td", linuxValue, "comparison-median");
-  const right = node("td", metalValue, "comparison-median metal-column");
+  const right = node("td", metalValue, "comparison-median");
   for (const [cell, source] of [[left, linux], [right, metal]]) {
     if (source) {
       cell.title = [metricName(source.row.primary ?? "unavailable"),
@@ -585,9 +621,7 @@ function renderComparisonRow(entry, extent) {
 
   const parity = node("td");
   if (ratio == null) {
-    const status = d3dView() && entry.reason === "Metal missing"
-      ? (linuxMetric ? "Measured" : row.status === "skip" ? "Skipped" : "Unavailable") : entry.reason;
-    parity.append(node("div", status, "comparison-unmatched"));
+    parity.append(node("div", entry.reason, "comparison-unmatched"));
   } else {
     const className = entry.outcome === "linux" ? "linux-lead" : entry.outcome === "metal" ? "metal-lead" : "";
     const content = node("div", null, `comparison-ratio ${className}`);
@@ -647,8 +681,6 @@ function renderWorkloads(previous = workloadSelect.value, requestedMetric = metr
     return;
   }
   inspector.hidden = false;
-  viewSelect.parentElement.hidden = d3dView();
-  if (d3dView()) viewSelect.value = "raw";
   const groups = new Map();
   for (const [key, row] of unique) {
     const group = BENCHMARK_GROUPS.find(({ id }) => id === benchmarkGroup(row)).title;
@@ -768,7 +800,6 @@ function renderMeasurements(series) {
       const tr = node("tr");
       tr.title = `Source row ${row.line}`;
       tr.replaceChildren(...cells.map((cell) => node("td", cell)));
-      if (d3dView()) tr.lastElementChild.className = "metal-column";
       rows.push(tr);
     }
   }
@@ -1018,8 +1049,6 @@ function restoreQuery() {
   state.openGroups = new Set(BENCHMARK_GROUPS.filter(({ id }) => openGroups.includes(id)).map(({ id }) => id));
 
   comparisonSearch.value = params.get("q") ?? "";
-  comparisonResult.parentElement.hidden = d3dView();
-  comparisonSort.parentElement.hidden = d3dView();
   setFilter(comparisonResult, params.get("results"), defaultResult(state.comparisonDevice));
   setFilter(comparisonSort, params.get("sort"), "linux");
   inspector.open = params.has("workload");

@@ -149,13 +149,15 @@ test("flagged clock-cap measurements stay inspectable and cannot affect scores",
   assert.equal(buildComparisons([flagged, metal, verified])[0].ratio, 1.15);
 });
 
-test("translated Direct3D measurements stay visible without entering Metal scores", () => {
+test("translated Direct3D pairs with Metal only for matching devices and workloads", () => {
   const d11 = run("d3d11", [result(140)]);
-  const d12 = run("d3d12", [result(120)]);
+  const d12 = run("d3d12", [result(120), result(160, { depth: 4 })]);
+  const otherDevice = run("d3d11", [result(200)], { device: "m4-mini" });
   const vk = run("vulkan", [result(150)]);
   const metal = run("metal", [result(100)]);
-  const pairs = buildComparisons([d11, d12, vk, metal]);
+  const pairs = buildComparisons([d11, d12, vk, metal, otherDevice]);
   assert.deepEqual(pairs.map((entry) => [entry.api, entry.linuxMetric.median, entry.ratio]), [
-    ["d3d11", 140, null], ["d3d12", 120, null], ["vulkan", 150, 1.5],
+    ["d3d11", 140, 1.4], ["d3d12", 120, 1.2], ["vulkan", 150, 1.5],
+    ["d3d12", 160, null], ["d3d11", 200, null],
   ]);
 });

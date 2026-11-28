@@ -504,7 +504,11 @@ th:first-child, td:first-child { padding-left: 20px; font-family: var(--sans); }
   gap: 8px;
   min-height: 30px;
 }
-.device-score a { font-size: .875rem; text-decoration-color: var(--border); }
+.device-score a, .overview-case { font-size: .875rem; text-decoration-color: var(--border); }
+.overview-case {
+  border: 0; background: transparent; padding: 0; text-align: left;
+}
+.overview-case:hover { text-decoration: underline; text-underline-offset: 4px; }
 .device-score strong { text-align: right; font: 600 .875rem var(--mono); }
 .score-count { text-align: right; font-variant-numeric: tabular-nums; }
 .score-track { position: relative; height: 13px; }
@@ -539,9 +543,6 @@ th:first-child, td:first-child { padding-left: 20px; font-family: var(--sans); }
 .comparison .group-index { padding-block: 0 12px; }
 .comparison .group-index:has(ul:empty) { display: none; }
 .comparison .group-index ul { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.raw-api .metal-column, .raw-api .comparison-axis, .raw-api .comparison-ratio-label { display: none; }
-.raw-api .comparison-workload-col { width: 46%; }
-.raw-api .comparison-median-col:not(.metal-column) { width: 20%; }
 .d3d11 { --series: var(--gl-native); }
 .d3d12 { --series: var(--gl-zink); }
 :root { --d3d11: var(--gl-native); --d3d12: var(--gl-zink); }
