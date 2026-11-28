@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0-only
 """Host-only data/provenance tests; synthetic wins are never benchmark results."""
 from pathlib import Path
-from contextlib import redirect_stdout
+from collections import Counter
+from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 import copy
 import importlib.util
 import io
@@ -256,6 +258,89 @@ class GateTests(unittest.TestCase):
         self.assertIn('missing', emitted['counts']['outcomes'])
         self.assertIn('BLOCKED', out.with_suffix('.md').read_text())
         self.assertEqual(emitted['provenance']['macos']['results_sha256'], gate.REFERENCE_SHA256)
+        self.assertEqual(emitted['device'], 'neo')
+        self.assertTrue(out.with_suffix('.md').read_text().startswith('# Neo performance gate'))
+
+    # Per-device references. 'm4-test' is a host-generated fixture pinned like a published
+    # record; it is never a GPU measurement.
+    def pinned_device(self, rows, device='m4-test', statuses=None):
+        path = self.record(rows, 'macos', meta=dict(metadata('macos'), device=device))
+        pin = dict(label='M4 test', path=str(path), results_sha256=gate.sha((path / 'results.jsonl').read_bytes()),
+                   statuses=statuses or dict(Counter(row['status'] for row in rows)))
+        return path, pin
+
+    def device_linux(self, rows, device='m4-test'):
+        return self.record(rows, meta=dict(metadata('linux'), device=device))
+
+    def device_compare(self, linux_path, macos_path, device='m4-test'):
+        return gate.compare(gate.load_record(linux_path, 'linux', device),
+                            gate.load_record(macos_path, 'macos', device), device=device)
+
+    def test_default_device_is_the_unchanged_neo_reference(self):
+        self.assertEqual(gate.DEFAULT_DEVICE, 'neo')
+        neo = gate.REFERENCES['neo']
+        self.assertEqual(neo['results_sha256'], 'cf60e2cb2810e63f53764c2f9bd3066b86e3907866763790ddb26e1c722b1270')
+        self.assertEqual(neo['statuses'], {'ok': 207, 'skip': 2})
+        self.assertEqual(gate.reference_path('neo'), gate.REFERENCE)
+        self.assertEqual(gate.REFERENCE_SHA256, neo['results_sha256'])
+        for device, pin in gate.REFERENCES.items():
+            with self.subTest(device=device):
+                record = gate.load_record(gate.reference_path(device), 'macos', device)
+                self.assertFalse(record.errors)
+                self.assertFalse(record.metadata_errors)
+                self.assertFalse(gate.reference_errors(record, device))
+
+    def test_device_reference_is_pinned_and_strict(self):
+        skipped = result(status='skip', test='rt.scene', lane='rt', reason='Metal pipeline unsupported')
+        reference = [result(10), result(10, test='compute.heavy'), skipped]
+        path, pin = self.pinned_device(reference)
+        wins = [result(9), result(9, test='compute.heavy')]
+        with mock.patch.dict(gate.REFERENCES, {'m4-test': pin}):
+            ledger = self.device_compare(self.device_linux(wins), path)
+            self.assertTrue(ledger['passed'])
+            self.assertEqual((ledger['device'], ledger['counts']['wins'], ledger['counts']['noncomparable']),
+                             ('m4-test', 2, 1))
+            self.assertEqual(ledger['provenance']['pinned_reference_sha256'], pin['results_sha256'])
+            # Strictness is the same as for Neo: equality, a gap or other run controls block.
+            for linux in ([result(9), result(10, test='compute.heavy')],
+                          [result(9), result(11, test='compute.heavy')],
+                          [result(9), result(9, test='compute.heavy', runs=3)],
+                          [result(9)]):
+                self.assertFalse(self.device_compare(self.device_linux(linux), path)['passed'])
+            # A byte-identical copy is accepted; a changed one is not.
+            copy_dir = self.root / 'copy'
+            copy_dir.mkdir()
+            for name in ('results.jsonl', 'meta.json'):
+                (copy_dir / name).write_bytes((path / name).read_bytes())
+            self.assertTrue(self.device_compare(self.device_linux(wins), copy_dir)['passed'])
+            (copy_dir / 'results.jsonl').write_text((path / 'results.jsonl').read_text().replace('"median": 10', '"median": 11', 1))
+            changed = self.device_compare(self.device_linux(wins), copy_dir)
+            self.assertFalse(changed['passed'])
+            self.assertTrue(any('pinned M4 test' in error for error in changed['errors']))
+            # Another device's records never stand in: Neo's reference or a Neo Linux record.
+            neo_ref = self.device_compare(self.device_linux(wins), gate.REFERENCE)
+            self.assertFalse(neo_ref['passed'])
+            self.assertTrue(neo_ref['errors'] and neo_ref['eligibility_errors'])
+            neo_linux = self.device_compare(self.device_linux(wins, device='neo'), path)
+            self.assertTrue(neo_linux['comparison_passed'])
+            self.assertFalse(neo_linux['qualification_eligible'])
+        with mock.patch.dict(gate.REFERENCES, {'m4-test': dict(pin, statuses={'ok': 3})}):
+            self.assertFalse(self.device_compare(self.device_linux(wins), path)['passed'])
+
+    def test_cli_selects_the_device_reference(self):
+        path, pin = self.pinned_device([result(10)])
+        linux = self.device_linux([result(9)])
+        with mock.patch.dict(gate.REFERENCES, {'m4-test': pin}), redirect_stdout(io.StringIO()):
+            out = self.root / 'm4'
+            self.assertEqual(gate.main([str(linux), '--device', 'm4-test', '--out', str(out)]), 0)
+            emitted = json.loads(out.with_suffix('.json').read_text())
+            self.assertEqual((emitted['device'], emitted['provenance']['macos']['results_sha256']),
+                             ('m4-test', pin['results_sha256']))
+            self.assertTrue(out.with_suffix('.md').read_text().startswith('# M4 test performance gate'))
+            # Without --device the record is gated against Neo and fails closed.
+            self.assertEqual(gate.main([str(linux), '--out', str(self.root / 'neo')]), 2)
+            with self.assertRaises(SystemExit), redirect_stderr(io.StringIO()):
+                gate.main([str(linux), '--device', 'unknown', '--out', str(self.root / 'x')])
 
 
 if __name__ == '__main__':

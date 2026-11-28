@@ -1,27 +1,46 @@
-# Full Neo performance comparison
+# Full performance comparison against a device's macOS record
 
 `performance-gate.py` compares one supplied Linux record against the exact
-recorded Neo macOS run, retaining all 209 benchmark identities. It does not
-combine historical and current results or inspect live hardware.
+recorded macOS run of the same device, retaining every benchmark identity of
+that reference. It does not combine historical and current results or inspect
+live hardware.
 
 ```
 python3 tools/performance-gate.py /path/to/current-linux-record \
   --out /path/to/results/current-vs-macos
+python3 tools/performance-gate.py --device DEVICE /path/to/current-linux-record \
+  --out /path/to/results/current-vs-macos
 ```
 
-This writes `current-vs-macos.json` and `current-vs-macos.md`. The reference is
-`records/neo/macos/20261023-25G83`, pinned to results SHA-256
-`cf60e2cb2810e63f53764c2f9bd3066b86e3907866763790ddb26e1c722b1270`.
-`--macos` may point to a byte-identical retained copy; it cannot silently select
-a smaller or different reference.
+This writes `current-vs-macos.json` and `current-vs-macos.md`.
 
-Every one of the 207 `ok` reference rows must strictly beat its macOS primary
-median. Equal values, gaps, missing/non-ok Linux targets, incompatible metrics
-or sampling controls block the comparison. The two macOS skips are explicitly
-listed as noncomparable: the medium and solarbay `rt.scene` configurations
-using `trace=pipeline`, which Metal cannot run. They do not become wins or
-silently disappear. A reported Linux failure remains a record eligibility
-failure even if the matching macOS case is noncomparable.
+## Pinned references
+
+Each device has one pinned macOS reference in `REFERENCES`: the record path,
+its results SHA-256 and its exact status counts. `--device` selects it; the
+default is `neo`, so commands without `--device` behave as before.
+
+| `--device` | Reference | Results SHA-256 | Identities |
+| --- | --- | --- | --- |
+| `neo` (default) | `records/neo/macos/20261023-25G83` | `cf60e2cb2810e63f53764c2f9bd3066b86e3907866763790ddb26e1c722b1270` | 209: 207 ok, 2 skip |
+
+The Linux record and the reference must both name the selected device in
+`meta.json` (`device`); a Linux record from one device is never gated against
+another device's macOS run. `--macos` may point to a byte-identical retained
+copy of the selected device's reference; it cannot silently select a smaller,
+changed or different reference. A new device's entry is added in the same
+change that publishes its macOS record, with the SHA-256 and status counts of
+that record.
+
+## Comparison
+
+Every `ok` reference row must strictly beat its macOS primary median (207
+rows for Neo). Equal values, gaps, missing/non-ok Linux targets, incompatible
+metrics or sampling controls block the comparison. The reference's skips are
+explicitly listed as noncomparable. For Neo they are the medium and solarbay
+`rt.scene` configurations using `trace=pipeline`, which Metal cannot run. They
+do not become wins or silently disappear. A reported Linux failure remains a
+record eligibility failure even if the matching macOS case is noncomparable.
 
 The identity is lane, test, canonical deep parameters, mode, depth, tag and
 effective stamps. Missing/null/default RT stamps means `passes`; explicit
@@ -70,5 +89,5 @@ Host-only verification:
 python3 tools/tests/test_performance_gate.py
 ```
 
-The tests use temporary synthetic data and audit the retained reference.
+The tests use temporary synthetic data and audit every pinned reference.
 Synthetic wins are test fixtures, never hardware measurements.
