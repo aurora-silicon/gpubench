@@ -265,7 +265,7 @@ def test_adapter_timeout_kills_descendant(tmp_path):
         try:
             if status.read_text().split()[2] == "Z":
                 break
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             break
         time.sleep(0.01)
     else:
