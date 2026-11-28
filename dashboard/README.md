@@ -23,6 +23,8 @@ The dashboard has separate Vulkan, OpenGL, Direct3D 11 and Direct3D 12 views. Op
 
 The comparison table selects the newest run with a recorded, clean suite revision per chip, API and configuration. It counts each paired depth once for each Linux API. The comparison uses the primary metric. Duplicate keys, failures and skipped results go to Unmatched. The workload chart selects one run per API per workload. Readers can select an older run from the Run Records section. Metal-relative values require matching device, lane, test, params, mode, depth, metric, unit and improvement direction. Runs with an unknown or dirty suite revision remain visible in measured mode. The table retains duplicate keys, skipped cases and failures. The chart omits those measurements.
 
+Rows with a `comparisonIssue` remain available as measured values and are excluded from Metal ratios. The archived Neo Metal single-queue triangle cases at depths 8 and 32 need recapture with matching attachment ordering and a verified image. The archive has no image check for those cases, and the published equivalent Metal workload reuses an untracked attachment across in-flight submissions.
+
 ## Deploy the site
 
 Bump the version query on changed CSS and JavaScript URLs before deploying UI changes. This lets browsers pick up the new files on the custom domain. From this repository's `gpu-dashboard` branch, run:

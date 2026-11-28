@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildComparisons, geometricMeanRatio, relative } from "./site/comparison.js";
+import { buildComparisons, canCompare, geometricMeanRatio, relative } from "./site/comparison.js";
 import { BENCHMARK_GROUPS, benchmarkGroup, selectChartCases } from "./site/groups.js";
 
 const rate = (median) => ({ median, unit: "fps", better: "higher" });
@@ -160,4 +160,23 @@ test("translated Direct3D pairs with Metal only for matching devices and workloa
     ["d3d11", 140, 1.4], ["d3d12", 120, 1.2], ["vulkan", 150, 1.5],
     ["d3d12", 160, null], ["d3d11", 200, null],
   ]);
+});
+
+test("provisional Metal rows retain measurements and a fresh recapture supersedes them", () => {
+  const reason = "Provisional Metal reference · recapture needed";
+  const metal = run("metal", [result(100), result(100, { depth: 8, comparisonIssue: reason })]);
+  const captures = ["vulkan", "d3d11", "d3d12"].map((api) =>
+    run(api, [result(150), result(150, { depth: 8 })]));
+  const pairs = buildComparisons([metal, ...captures]);
+  assert.equal(canCompare(metal, metal.rows[0]), true);
+  assert.equal(canCompare(metal, metal.rows[1]), false);
+  for (const pair of pairs) {
+    assert.equal(pair.metalMetric.median, 100);
+    assert.equal(pair.linuxMetric.median, 150);
+    assert.equal(pair.reason, pair.metal.row.depth === 8 ? reason : null);
+    assert.equal(pair.ratio, pair.metal.row.depth === 8 ? null : 1.5);
+  }
+  const recapture = run("metal", [result(120, { depth: 8 })], { date: "2026-11-22" });
+  assert.deepEqual(buildComparisons([metal, recapture, ...captures])
+    .filter((pair) => pair.metal.row.depth === 8).map((pair) => pair.ratio), [1.25, 1.25, 1.25]);
 });

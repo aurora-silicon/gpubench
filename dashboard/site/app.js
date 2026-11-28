@@ -1,4 +1,4 @@
-import { buildComparisons, canCompare, compatible, geometricMeanRatio, metalPipelineUnsupported, relative, workloadKey } from "./comparison.js?v=9";
+import { buildComparisons, canCompare, compatible, geometricMeanRatio, metalPipelineUnsupported, relative, workloadKey } from "./comparison.js?v=10";
 import { BENCHMARK_GROUPS, benchmarkGroup, selectChartCases } from "./groups.js?v=9";
 
 const DEVICES = [
@@ -719,15 +719,16 @@ function render(resetMetrics = false, requestedMetric = metricSelect.value) {
   }
   const metric = metricSelect.value;
   const metal = records.find((record) => record.id === "metal");
-  const metalValues = new Map((metal?.usable ?? []).map((entry) => [entry.depth, entry.metrics[metric]]));
+  const metalValues = new Map((metal?.usable ?? [])
+    .filter((entry) => canCompare(metal.run, entry))
+    .map((entry) => [entry.depth, entry.metrics[metric]]));
   const shape = records.flatMap((record) => record.usable ?? []).find((entry) => entry.metrics[metric])?.metrics[metric];
   const relativeView = viewSelect.value === "relative";
-  const comparisonAvailable = canCompare(metal?.run);
   const series = records.map((record) => {
     const points = (record.usable ?? []).flatMap((entry) => {
       const value = entry.metrics[metric];
       if (!value || !compatible(value, shape)) return [];
-      const ratio = comparisonAvailable && canCompare(record.run) ? relative(value, metalValues.get(entry.depth)) : null;
+      const ratio = canCompare(record.run, entry) ? relative(value, metalValues.get(entry.depth)) : null;
       const y = relativeView ? (ratio == null ? null : Math.log2(ratio)) : value.median;
       return [{ depth: entry.depth, value, ratio, y }];
     });
@@ -794,7 +795,8 @@ function renderMeasurements(series) {
         value ? displayValue(value.median, value.unit) : status,
         value ? `${number.format(value.p5)}–${number.format(value.p95)} ${unitName(value.unit)}` : "—",
         value ? number.format(value.n) : "—",
-        duplicate ? "Duplicate key" : point?.ratio == null || record.id === "metal" ? "—" : `${axisNumber.format(point.ratio)}×`,
+        row.comparisonIssue ?? (duplicate ? "Duplicate key"
+          : point?.ratio == null || record.id === "metal" ? "—" : `${axisNumber.format(point.ratio)}×`),
       ];
       const tr = node("tr");
       tr.title = `Source row ${row.line}`;

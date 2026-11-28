@@ -27,8 +27,8 @@ export function geometricMeanRatio(ratios) {
   return Math.exp(ratios.reduce((sum, ratio) => sum + Math.log(ratio), 0) / ratios.length);
 }
 
-export function canCompare(run) {
-  return Boolean(run?.suite && !run.suite.includes("+dirty") && !run.comparisonIssue);
+export function canCompare(run, row) {
+  return Boolean(run?.suite && !run.suite.includes("+dirty") && !run.comparisonIssue && !row?.comparisonIssue);
 }
 
 function indexResults(runs) {
@@ -69,7 +69,8 @@ function compareSources(linuxSources, metalSources) {
   const metal = metalSources?.eligible ?? metalSources?.latest;
   const linuxMetric = metricFor(linux);
   const metalMetric = metricFor(metal);
-  let reason = linux?.run.comparisonIssue ?? metal?.run.comparisonIssue;
+  let reason = linux?.run.comparisonIssue ?? metal?.run.comparisonIssue ??
+    linux?.row.comparisonIssue ?? metal?.row.comparisonIssue;
   let ratio = null;
   if (reason) return { linux, metal, linuxMetric, metalMetric, reason, ratio };
   if (!linux || !metal) reason = linux ? "Metal missing" : "Linux missing";
