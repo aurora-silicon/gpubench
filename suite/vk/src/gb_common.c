@@ -11,6 +11,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <pthread.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -806,21 +807,47 @@ self_exe(const struct gb_opts *o)
    return o->argv0;
 }
 
+static int
+child_pipe(int fds[2])
+{
+   if (pipe(fds) < 0)
+      return -1;
+
+   if (fcntl(fds[0], F_SETFD, FD_CLOEXEC) < 0 ||
+       fcntl(fds[1], F_SETFD, FD_CLOEXEC) < 0) {
+      close(fds[0]);
+      close(fds[1]);
+      return -1;
+   }
+   return 0;
+}
+
 int
 gb_spawn_children(const struct gb_opts *o, int n, struct gb_child *out)
 {
    const char *exe = self_exe(o);
    char **argv = calloc(o->argc + 2, sizeof(char *));
+   if (!argv)
+      return -1;
    argv[0] = (char *)exe;
    for (int i = 1; i < o->argc; i++)
       argv[i] = o->argv[i];
    argv[o->argc] = "--child";
    argv[o->argc + 1] = NULL;
 
+   int result = -1;
    for (int i = 0; i < n; i++) {
       int to[2], from[2];
-      if (pipe(to) || pipe(from))
-         return -1;
+      /* Later workers must not retain earlier workers' control pipes.
+       * After a setup failure, closing the parent's writers must give
+       * every already-started worker EOF so it can exit. */
+      if (child_pipe(to))
+         goto done;
+      if (child_pipe(from)) {
+         close(to[0]);
+         close(to[1]);
+         goto done;
+      }
       posix_spawn_file_actions_t fa;
       posix_spawn_file_actions_init(&fa);
       posix_spawn_file_actions_adddup2(&fa, to[0], 0);
@@ -832,17 +859,22 @@ gb_spawn_children(const struct gb_opts *o, int n, struct gb_child *out)
       posix_spawn_file_actions_destroy(&fa);
       close(to[0]);
       close(from[1]);
-      if (rc)
-         return -1;
+      if (rc) {
+         close(to[1]);
+         close(from[0]);
+         goto done;
+      }
       out[i].pid = pid;
       out[i].to_child = to[1];
       out[i].from_child = from[0];
       /* Stagger: the next child starts only after this one is set up. */
       if (gb_child_wait_ready(&out[i]))
-         return -1;
+         goto done;
    }
+   result = 0;
+done:
    free(argv);
-   return 0;
+   return result;
 }
 
 int
